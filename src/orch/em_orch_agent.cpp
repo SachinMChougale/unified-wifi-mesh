@@ -192,6 +192,15 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
             ((em->get_state() == em_state_agent_link_quality_report_pending))) {
             return true;
         }
+    } else if (pcmd->m_type == em_cmd_type_op_channel_sel_req) {
+        if (em->get_state() == em_state_agent_channel_sel_req_rcvd) {
+            em_printfout("cmd : %s, actively executing for radio %s",
+                em_cmd_t::get_cmd_type_str(pcmd->m_type), util::mac_to_string(em->get_al_interface_mac()).c_str());
+            return true;
+        } else {
+            em_printfout("cmd : %s, not executing for radio %s, EM state is %s",
+                em_cmd_t::get_cmd_type_str(pcmd->m_type), util::mac_to_string(em->get_al_interface_mac()).c_str(), em_t::state_2_str(em->get_state()));
+        }
     }
 
     return false;
@@ -200,6 +209,19 @@ bool em_orch_agent_t::is_em_ready_for_orch_exec(em_cmd_t *pcmd, em_t *em)
 
 void em_orch_agent_t::pre_process_cancel(em_cmd_t *pcmd, em_t *em)
 {
+    switch (pcmd->get_type()) {
+        case em_cmd_type_op_channel_sel_req:
+                em_printfout("Canceling channel selection request command and setting state back to configured\n");
+                em->send_operating_channel_report_msg();
+                em->set_state(em_state_agent_configured);
+
+                // TODO:
+                // Do we need to create orchestration and send or can we directly send from here?
+            break;
+
+        default:
+            break;
+    }
 
 }
 
@@ -342,6 +364,7 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
     mac_addr_str_t	src_mac_str, dst_mac_str;
     dm_easy_mesh_t dm;
     mac_address_t	radio_mac, mac1, mac2;
+    mac_address_t	bss_mac, rad_mac;
     dm_sta_t *sta;
 
     ctx = pcmd->m_data_model.get_cmd_ctx();
@@ -432,19 +455,15 @@ unsigned int em_orch_agent_t::build_candidates(em_cmd_t *pcmd)
 					}
 				}
 				break;
-            case em_cmd_type_op_channel_report:
-                if (!(em->is_al_interface_em())) {
-                    radio = pcmd->m_data_model.get_radio(static_cast<unsigned int> (0));
-                    if (radio == NULL) {
-                        printf("%s:%d channel sel radio cannot be found.\n", __func__, __LINE__);
-                        break;
-                    }
-                    if ((memcmp(radio->get_radio_interface_mac(),em->get_radio_interface_mac(),sizeof(mac_address_t)) == 0) && (em->get_state() == em_state_agent_channel_select_configuration_pending)) {
-                        queue_push(pcmd->m_em_candidates, em);
-                        count++;
-                        dm_easy_mesh_t::macbytes_to_string(em->get_radio_interface_mac(), dst_mac_str);
-                        printf("%s:%d Operating Channel Report build candidate MAC=%s\n", __func__, __LINE__,dst_mac_str);
-                    }
+
+            case em_cmd_type_op_channel_sel_req:
+                em_printfout("Received op channel selection request, building candidates radio %s\n", pcmd->m_param.u.args.args[0]);
+                dm_easy_mesh_t::string_to_macbytes(pcmd->m_param.u.args.args[0], rad_mac);
+
+                if (memcmp(rad_mac, em->get_radio_interface_mac(), sizeof(mac_address_t)) == 0) {
+                    queue_push(pcmd->m_em_candidates, em);
+                    count++;
+                    em_printfout("%s:%d op channel selection request build candidate added for radio %s\n", __func__, __LINE__, pcmd->m_param.u.args.args[0]);
                 }
                 break;
 

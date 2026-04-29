@@ -638,6 +638,7 @@ public:
 	 * @note Ensure that the event structure is properly initialized before passing it to this function.
 	 */
 	void handle_onewifi_radio_cb(em_bus_event_t *evt);
+	void handle_onewifi_status_cb(em_bus_event_t *evt);
     
 	/**!
 	 * @brief Handles the client association control request event.

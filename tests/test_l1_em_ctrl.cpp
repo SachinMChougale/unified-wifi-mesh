@@ -3809,6 +3809,7 @@ TEST_F(em_ctrl_t_Test, io_process_bus_event_non_dm_commit)
         em_bus_event_type_onewifi_private_cb,
         em_bus_event_type_onewifi_mesh_sta_cb,
         em_bus_event_type_onewifi_radio_cb,
+        em_bus_event_type_onewifi_status_cb,
         em_bus_event_type_m2ctrl_configuration,
         em_bus_event_type_sta_assoc,
         em_bus_event_type_channel_pref_query,
