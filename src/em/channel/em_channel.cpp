@@ -911,7 +911,10 @@ int em_channel_t::send_channel_sel_response_msg(em_chan_sel_resp_code_type_t cod
         printf("%s:%d: Channel Selection Response msg failed, error:%d\n", __func__, __LINE__, errno);
         return -1;
     }
-
+    // After response transmission, move to the response-sent state.
+    // A radio subdoc callback for the same band should later trigger the Operating Channel Report.
+    set_state(em_state_agent_channel_sel_resp_sent);
+    em_printfout("Channel Selection Response message sent (msg_id: 0x%04x, response code: %d)\n", msg_id, code);
     return static_cast<int> (len);
 
 }
@@ -1046,16 +1049,16 @@ int em_channel_t::send_operating_channel_report_msg()
     tmp += (sizeof (em_tlv_t));
     len += (sizeof (em_tlv_t));
     if (em_msg_t(em_msg_type_op_channel_rprt, em_profile_type_3, buff, len).validate(errors) == 0) {
-        printf("Operating Channel Report msg failed validation in tnx end\n");   
+        em_printfout("Operating Channel Report msg failed validation in tnx end\n");   
         return -1;
     }
 
     if (send_frame(buff, len)  < 0) {
-        printf("%s:%d:  Operating Channel Report msg failed, error:%d\n", __func__, __LINE__, errno);
+        em_printfout("Operating Channel Report msg failed, error:%d\n", errno);
         return -1;
     }
     dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), mac_str);
-    printf("%s:%d Operating Channel Report msg send for %s \n", __func__, __LINE__,mac_str);
+    em_printfout("Operating Channel Report msg send for %s \n",mac_str);
     return static_cast<int> (len);
 
 }
@@ -1891,10 +1894,17 @@ int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len)
 {
     em_tlv_t    *tlv;
     int tlv_len;
+    em_cmdu_t  *cmdu;
 
     op_class_channel_sel op_class;
-
+#if 0
+    if (get_state() == em_state_agent_channel_select_configuration_pending) {
+        em_printfout("Already in channel selection process, current state:%d\n", get_state());
+        return -1;
+    }
+#endif
     memset(&op_class, 0, sizeof(op_class_channel_sel));
+    cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
     tlv = reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
     tlv_len = static_cast<int> (len - (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)));
 
@@ -1911,11 +1921,41 @@ int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len)
     }
 
 	op_class.freq_band = get_band();
-   
+    m_chan_req_msg_id = ntohs(cmdu->id);   
 	get_mgr()->io_process(em_bus_event_type_channel_sel_req, reinterpret_cast<unsigned char *> (&op_class), sizeof(op_class_channel_sel));
-    
+
+    // Set state to indicate that the agent has received a Channel Selection Request and is waiting
+    // for the OneWiFi status callback for this request.
+    // The response will be generated when OneWiFi sends back Status for SubDocName "ChannelSelection".
+    set_state(em_state_agent_channel_sel_req_rcvd);
+#if 0
+    // Start orchestration of channel selection here
+
+    // Sachin TODO:
+    // Submit channel selection subdoc.
+    // Start "one second timer" here.
+    // IF we dont get acknoledgement for channel selection request within that time,
+    // then we can respond with rejected channel selection response.
+    // once ack for channel selection received, stop this timer, send channel sel response with status accepted/rejected, then start another
+    // timer to send out ocr 
+    // Drawback: Again here we need to maintain states!!! to identify which radio is in channel selection process.
+
+    // Similarly for OCR we need to maintain state to indentify radio for which OCR has to be sent.
+    if (m_channel_sel_timer) {
+        m_channel_sel_timer->stop();
+    }
+
+    m_channel_sel_timer = std::make_unique<ThreadedTimer>();
+
+    m_channel_sel_timer->execute_after(std::chrono::milliseconds(10000), [this]() {
+        em_printfout("Channel selection response timeout occurred\n");
+        // Sachin TODO: Send channel selection response with rejected status since timeout occurred
+        // Also update the state of radio to configured since channel selection process is completed with failure in this case.
+        set_state(em_state_ctrl_configured);
+        m_channel_sel_timer.reset();
+    });
+#endif
 	printf("%s:%d Received channel selection request \n",__func__, __LINE__);
-	set_state(em_state_agent_channel_select_configuration_pending);
     return 0;
 }
 
@@ -2232,9 +2272,9 @@ void em_channel_t::process_msg(unsigned char *data, unsigned int len)
 	    break;
 
         case em_msg_type_channel_sel_req:
-            if ((get_service_type() == em_service_type_agent)  && ((get_state() < em_state_agent_channel_select_configuration_pending) || (get_state() >= em_state_agent_configured))) {
+            if ((get_service_type() == em_service_type_agent)  && ((get_state() < em_state_agent_channel_sel_req_rcvd) || (get_state() >= em_state_agent_configured))) {
                 handle_channel_sel_req(data, len);
-                send_channel_sel_response_msg(em_chan_sel_resp_code_type_accept, ntohs(cmdu->id));
+                //send_channel_sel_response_msg(em_chan_sel_resp_code_type_accept, ntohs(cmdu->id));
             }
             break;
 
@@ -2302,11 +2342,10 @@ void em_channel_t::process_state()
         case em_state_agent_channel_report_pending:
             if (get_service_type() == em_service_type_agent) {
                 send_operating_channel_report_msg();
-                printf("%s:%d operating_channel_report_msg send\n", __func__, __LINE__);
+                printf("%s:%d operating_channel_report_msg send for radio %s\n", __func__, __LINE__, util::mac_to_string(get_radio_interface_mac()).c_str());
                 set_state(em_state_agent_configured);
             }
             break;
-
 		case em_state_agent_channel_scan_result_pending:
             if (get_service_type() == em_service_type_agent) {
 				dm = get_data_model();
@@ -2317,7 +2356,7 @@ void em_channel_t::process_state()
             }
 			break;
         default:
-            printf("%s:%d: unhandled case %s\n", __func__, __LINE__, em_t::state_2_str(get_state()));
+            printf("%s:%d: unhandled case %s for radio %s\n", __func__, __LINE__, em_t::state_2_str(get_state()), util::mac_to_string(get_radio_interface_mac()).c_str());
             break;
 
     }

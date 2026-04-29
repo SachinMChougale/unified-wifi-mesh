@@ -192,6 +192,15 @@ void em_t::orch_execute(em_cmd_t *pcmd)
             m_sm.set_state(em_state_agent_channel_report_pending);
             break;
 
+        case em_cmd_type_op_channel_sel_req:
+            // No direct state transition is performed in the generic EM command path.
+            // Channel selection state changes are driven by the request/response lifecycle in em_channel:
+            //   - em_state_agent_channel_sel_req_rcvd when the request is received
+            //   - em_state_agent_channel_sel_resp_sent when the response is transmitted
+            //   - em_state_agent_channel_report_pending when the radio callback triggers OCR.
+            //   - em_state_agent_configured when the channel change is completed and OCR is sent.
+            break;
+
         case em_cmd_type_sta_link_metrics:
             m_sm.set_state((m_service_type == em_service_type_agent) ?
                 em_state_agent_sta_link_metrics_pending:em_state_ctrl_sta_link_metrics_pending);
@@ -430,6 +439,7 @@ void em_t::handle_agent_state()
             break;
         case em_cmd_type_channel_pref_query:
         case em_cmd_type_op_channel_report:
+        case em_cmd_type_op_channel_sel_req:
             em_channel_t::process_state();
             break;
 
@@ -2481,7 +2491,8 @@ const char *em_t::state_2_str(em_state_t state)
         EM_STATE_2S(em_state_agent_sta_link_metrics_pending)
         EM_STATE_2S(em_state_max)
         EM_STATE_2S(em_state_agent_beacon_report_pending)
-        EM_STATE_2S(em_state_agent_channel_select_configuration_pending)
+        EM_STATE_2S(em_state_agent_channel_sel_req_rcvd)
+        EM_STATE_2S(em_state_agent_channel_sel_resp_sent)
         default: break;
     }
 

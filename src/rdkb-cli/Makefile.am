@@ -52,6 +52,7 @@ libemcli_la_SOURCES = \
  $(top_srcdir)/src/cmd/em_cmd_get_ssid.cpp \
  $(top_srcdir)/src/cmd/em_cmd_onewifi_cb.cpp \
  $(top_srcdir)/src/cmd/em_cmd_op_channel_report.cpp \
+ $(top_srcdir)/src/cmd/em_cmd_op_channel_sel_req.cpp \
  $(top_srcdir)/src/cmd/em_cmd_remove_device.cpp \
  $(top_srcdir)/src/cmd/em_cmd_reset.cpp \
  $(top_srcdir)/src/cmd/em_cmd_scan_channel.cpp \

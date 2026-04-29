@@ -136,7 +136,8 @@ public:
 	 *
 	 * @note Ensure that the event and command structures are properly initialized before calling this function.
 	 */
-	int analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t *pcmd[]);
+	int analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t *pcmd[], hash_map_t *em_map);
+	int analyze_onewifi_status_cb(em_bus_event_t *evt, em_cmd_t *pcmd[], hash_map_t *em_map);
 	
 	/**!
 	 * @brief Analyzes the M2 control configuration.
@@ -187,7 +188,7 @@ public:
 	 *
 	 * @note Ensure that the event and descriptor pointers are valid before calling this function.
 	 */
-	int analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_desc_t *desc,bus_handle_t *bus_hdl);
+	int analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_desc_t *desc,bus_handle_t *bus_hdl, em_cmd_t *pcmd[]);
 
     /**!
 	 * @brief Analyzes the csa beacon frame received.

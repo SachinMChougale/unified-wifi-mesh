@@ -189,6 +189,7 @@ TEST(em_cmd_t, bus_2_cmd_type_ValidConversion)
         { em_bus_event_type_topo_sync,          em_cmd_type_em_config },
         { em_bus_event_type_onewifi_mesh_sta_cb,em_cmd_type_none },
         { em_bus_event_type_onewifi_radio_cb,   em_cmd_type_none },
+        { em_bus_event_type_onewifi_status_cb,  em_cmd_type_op_channel_sel_req },
         { em_bus_event_type_m2ctrl_configuration, em_cmd_type_none },
         { em_bus_event_type_channel_sel_req,    em_cmd_type_none },
         { em_bus_event_type_set_radio,          em_cmd_type_set_radio },

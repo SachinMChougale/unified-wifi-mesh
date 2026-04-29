@@ -214,6 +214,8 @@ void em_agent_t::handle_channel_sel_req(em_bus_event_t *evt)
     unsigned int num;
     wifi_bus_desc_t *desc;
     raw_data_t l_bus_data;
+    em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+
 
     if((desc = get_bus_descriptor()) == NULL) {
        printf("descriptor is null");
@@ -221,8 +223,12 @@ void em_agent_t::handle_channel_sel_req(em_bus_event_t *evt)
 
     if (m_orch->is_cmd_type_in_progress(evt) == true) {
         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
-    } else if ((num = m_data_model.analyze_channel_sel_req(evt, desc, &m_bus_hdl)) == 0) {
-            printf("handle_channel_sel_req complete");
+    } else if ((num = m_data_model.analyze_channel_sel_req(evt, desc, &m_bus_hdl, pcmd)) <= 0) { // this function retuns 0 and -1 , Need to treat both as failure
+        // when it goes to this case?
+        // TODO: Respond with decline? by extracting the radio id from evt?
+         printf("analyze_channel_sel_req failed\n");
+    } else if (m_orch->submit_commands(pcmd, num) > 0) {
+        printf("handle_channel_sel_req complete");
     }
 }
 
@@ -307,9 +313,32 @@ void em_agent_t::handle_onewifi_radio_cb(em_bus_event_t *evt)
 
     if (m_orch->is_cmd_type_in_progress(evt) == true) {
         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
-    } else if ((num = m_data_model.analyze_onewifi_radio_cb(evt, pcmd)) == 0) {
+    } else if ((num = m_data_model.analyze_onewifi_radio_cb(evt, pcmd, m_em_map)) == 0) {
         em_printfout("analyze_onewifi_radio_cb completed");
     } else if (m_orch->submit_commands(pcmd, num) > 0) {
+        em_printfout("submitted command for orchestration");
+    }
+}
+
+void em_agent_t::handle_onewifi_status_cb(em_bus_event_t *evt)
+{
+    em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+    unsigned int num;
+    wifi_bus_desc_t *desc;
+
+    em_printfout("Handling OneWiFi status callback event");
+
+    if ((desc = get_bus_descriptor()) == NULL) {
+        em_printfout("descriptor is null");
+    }
+
+    if (m_orch->is_cmd_type_in_progress(evt) == true) {
+        m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
+    } else if ((num = m_data_model.analyze_onewifi_status_cb(evt, pcmd, m_em_map)) == 0) {
+        em_printfout("analyze_onewifi_status_cb completed");
+    } else if (m_orch->submit_commands(pcmd, num) > 0) {
+        // Note: For status callbacks, we may not actually generate any 
+        // commands to submit to orchestration
         em_printfout("submitted command for orchestration");
     }
 }
@@ -900,6 +929,9 @@ void em_agent_t::handle_bus_event(em_bus_event_t *evt)
 		case em_bus_event_type_onewifi_radio_cb:
 			handle_onewifi_radio_cb(evt);
 			break;
+		case em_bus_event_type_onewifi_status_cb:
+			handle_onewifi_status_cb(evt);
+			break;
 
 		case em_bus_event_type_channel_pref_query:
 			handle_channel_pref_query(evt);
@@ -1421,12 +1453,33 @@ void em_agent_t::onewifi_cb(char *event_name, raw_data_t *data, void *userData)
 	const char *json_data = (char *)data->raw_data.bytes;
 	cJSON *json = cJSON_Parse(json_data);
 
-	//printf("%s:%dRecv data from onewifi:\r\n%s\r\n", __func__, __LINE__, (char *)data->raw_data.bytes);
+	printf("%s:%dRecv data from onewifi:\r\n%s\r\n", __func__, __LINE__, (char *)data->raw_data.bytes);
 
 	if (json == NULL) {
 		em_printfout("Error parsing JSON");
         return;
 	}
+
+    // If the OneWiFi payload contains a Status field, treat it as a status event.
+    // This includes channel selection status messages and other radio decode status updates.
+    cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "Status");
+    if (cJSON_IsString(status) && (status->valuestring != NULL)) {
+        cJSON *subdoc_name = cJSON_GetObjectItemCaseSensitive(json, "SubDocName");
+        const char *subdoc_str = (cJSON_IsString(subdoc_name) && subdoc_name->valuestring) ? subdoc_name->valuestring : "unknown";
+        const char *status_str = status->valuestring;
+        em_printfout("OneWiFi status received for subdoc '%s': %s", subdoc_str, status_str);
+
+        if (strcmp(subdoc_str, "ChannelSelection") == 0) {
+            em_printfout("Routing channel selection status to handler");
+            g_agent.io_process(em_bus_event_type_onewifi_status_cb, (unsigned char *)data->raw_data.bytes, data->raw_data_len);
+
+        } else {
+            em_printfout("OneWiFi status event with unhandled SubDocName '%s'", subdoc_str);
+        }
+        cJSON_Delete(json);
+        return;
+    }
+
     cJSON *subdoc_name = cJSON_GetObjectItemCaseSensitive(json, "SubDocName");
     if (!cJSON_IsString(subdoc_name) || (subdoc_name->valuestring == NULL)) {
         cJSON_Delete(json);

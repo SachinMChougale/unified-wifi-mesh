@@ -46,6 +46,7 @@
 #include "em_cmd_cfg_renew.h"
 #include "em_cmd_channel_pref_query.h"
 #include "em_cmd_op_channel_report.h"
+#include "em_cmd_op_channel_sel_req.h"
 #include "em_cmd_btm_report.h"
 #include "em_cmd_scan_result.h"
 #include "em_cmd_beacon_report.h"
@@ -341,7 +342,7 @@ int dm_easy_mesh_agent_t::analyze_onewifi_vap_cb(em_bus_event_t *evt, em_cmd_t *
     return num;
 }
 
-int dm_easy_mesh_agent_t::analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t *pcmd[])
+int dm_easy_mesh_agent_t::analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t *pcmd[], hash_map_t *em_map)
 {
     webconfig_t config;
     webconfig_external_easymesh_t ext;
@@ -352,6 +353,8 @@ int dm_easy_mesh_agent_t::analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t
     dm_easy_mesh_agent_t  dm;
     em_cmd_t *tmp;
     em_commit_target_t cm_config;
+    const char *json_data = reinterpret_cast<char *> (evt->u.raw_buff);
+    em_printfout("%s:%d Received Radio subdoc callback with data: %s\n", __func__, __LINE__, json_data);
 
     webconfig_proto_easymesh_init(&ext, &dm, NULL, NULL, get_num_radios, set_num_radios,
             get_num_op_class, set_num_op_class, get_num_bss, set_num_bss,
@@ -377,6 +380,42 @@ int dm_easy_mesh_agent_t::analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t
 	cm_config.type = em_commit_target_radio;
 	snprintf(reinterpret_cast<char *> (cm_config.params), sizeof(cm_config.params), "%s", mac_str);
 	commit_config(dm, cm_config);
+    em_freq_band_t band;
+    switch (type) {
+        case webconfig_subdoc_type_radio_24G:
+            em_printfout("Received 2.4G Radio subdoc callback");
+            band = em_freq_band_24;
+            break;
+        case webconfig_subdoc_type_radio_5G:
+            em_printfout("Received 5G Radio subdoc callback");
+            band = em_freq_band_5;
+            break;
+        case webconfig_subdoc_type_radio_6G:
+            em_printfout("Received 6G Radio subdoc callback");
+            band = em_freq_band_6;
+            break;
+        default:
+            em_printfout("Received unknown subdoc type callback: %d", type);
+            break;
+    }
+
+    // Expected channel selection state path:
+    // 1) Channel Selection Request is received and EM transitions to em_state_agent_channel_sel_req_rcvd.
+    // 2) OneWiFi status callback arrives for SubDocName "ChannelSelection" and the agent sends accept/decline response.
+    // 3) send_channel_sel_response_msg sets state to em_state_agent_channel_sel_resp_sent.
+    // 4) When the Radio subdoc callback for the corresponding band arrives, the agent moves EM to em_state_agent_channel_report_pending
+    //    so that an Operating Channel Report can be generated and send the new channel information.
+    em_t *em = static_cast<em_t *> (hash_map_get_first(em_map));
+        while (em != NULL) {
+            if (em->get_state() == em_state_agent_channel_sel_resp_sent && em->get_band() == band) {
+                em_printfout("Found EM in channel selection pending state, sending OCR for radio %s", util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                em->set_state(em_state_agent_channel_report_pending);
+                break;
+            }
+            em = static_cast<em_t *> (hash_map_get_next(em_map, em));
+        }
+
+#if 0
 	pcmd[num] = new em_cmd_op_channel_report_t(evt->params, dm);
 	tmp = pcmd[num];
 	num++;
@@ -385,7 +424,77 @@ int dm_easy_mesh_agent_t::analyze_onewifi_radio_cb(em_bus_event_t *evt, em_cmd_t
 		tmp = pcmd[num];
 		num++;
 	}
+#endif
 	return num;
+}
+        
+int dm_easy_mesh_agent_t::analyze_onewifi_status_cb(em_bus_event_t *evt, em_cmd_t *pcmd[], hash_map_t *em_map)
+{
+    int num = 0;
+    em_freq_band_t freq_band;
+    const char *json_data = reinterpret_cast<char *> (evt->u.raw_buff);
+    em_printfout("%s:%d Received OneWiFi status callback with data: %s\n", __func__, __LINE__, json_data);
+
+    cJSON *json = cJSON_Parse(json_data);
+    if (json != NULL) {
+        cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "Status");
+        cJSON *subdoc_name = cJSON_GetObjectItemCaseSensitive(json, "SubDocName");
+        const char *subdoc_str = (cJSON_IsString(subdoc_name) && subdoc_name->valuestring) ? subdoc_name->valuestring : "unknown";
+        const char *status_str = (cJSON_IsString(status) && status->valuestring) ? status->valuestring : "unknown";
+
+        em_printfout("Processing OneWiFi status for subdoc '%s': %s", subdoc_str, status_str);
+
+        // Handle channel selection status specifically
+#if 1
+        cJSON *radio_name = cJSON_GetObjectItemCaseSensitive(json, "SubDocRadioName");
+		if (cJSON_IsString(radio_name) && (radio_name->valuestring != NULL)) {
+			if (strcmp(radio_name->valuestring, "radio_5G") == 0) {
+				freq_band = em_freq_band_5 ;
+				em_printfout("Found SubDocName:radio 5G recv");
+			} else if (strcmp(radio_name->valuestring, "radio_2.4G") == 0) { //radio_2.4G
+				em_printfout("Found SubDocName:radio 2.4G recv");
+				freq_band = em_freq_band_24;
+			} else if (strcmp(radio_name->valuestring, "radio_6G") == 0) {
+				em_printfout("Found SubDocName:radio 6G recv");
+				freq_band = em_freq_band_6;
+			}
+		}
+#endif
+        if (strcmp(subdoc_str, "ChannelSelection") == 0) {
+            // Channel selection status handling path:
+            // - The request has already been received and EM is in em_state_agent_channel_sel_req_rcvd.
+            // - A OneWiFi status callback indicates whether the radio change can proceed.
+            // - On Success/Error the agent sends a Channel Selection Response and transitions to em_state_agent_channel_sel_resp_sent.
+            // - A later Radio subdoc callback for the same band should then drive the Operating Channel Report.
+            em_printfout("Detected channel selection status subdoc '%s'", subdoc_str);
+            em_t *em = static_cast<em_t *> (hash_map_get_first(em_map));
+            while (em != NULL) {
+                if (em->get_state() == em_state_agent_channel_sel_req_rcvd && em->get_band() == freq_band) {
+                    em_printfout("Found EM in channel selection pending state for radio %s", util::mac_to_string(em->get_radio_interface_mac()).c_str());
+                    if (strcmp(status_str, "Success") == 0) {
+                        em_printfout("Channel selection succeeded for subdoc '%s', sending accept response", subdoc_str);
+                        em->send_channel_sel_response_msg(em_chan_sel_resp_code_type_accept, em->m_chan_req_msg_id);
+                    } else if (strcmp(status_str, "Error") == 0) {
+                        cJSON *error_desc = cJSON_GetObjectItemCaseSensitive(json, "ErrorDescription");
+                        const char *error_str = (cJSON_IsString(error_desc) && error_desc->valuestring) ? error_desc->valuestring : "unknown error";
+                        em_printfout("Channel selection failed for subdoc '%s': %s, sending decline response", subdoc_str, error_str);
+                        em->send_channel_sel_response_msg(em_chan_sel_resp_code_type_decline, em->m_chan_req_msg_id);
+                    }
+                    break;
+                }
+                em = static_cast<em_t *> (hash_map_get_next(em_map, em));
+            }
+            if (em == NULL) {
+                em_printfout("No EM found in channel selection pending state for subdoc '%s'", subdoc_str);
+            }
+        }
+
+        cJSON_Delete(json);
+    } else {
+        em_printfout("Failed to parse JSON in analyze_onewifi_status_cb");
+    }
+
+    return num; // No commands generated for status callbacks
 }
         
 int dm_easy_mesh_agent_t::analyze_channel_pref_query(em_bus_event_t *evt, em_cmd_t *pcmd[])
@@ -403,7 +512,7 @@ int dm_easy_mesh_agent_t::analyze_channel_pref_query(em_bus_event_t *evt, em_cmd
     return num;
 }
 
-int dm_easy_mesh_agent_t::analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_desc_t *desc,bus_handle_t *bus_hdl)
+int dm_easy_mesh_agent_t::analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_desc_t *desc,bus_handle_t *bus_hdl, em_cmd_t *pcmd[])
 {
     unsigned int i = 0, j = 0, noofopclass = 0;
     op_class_channel_sel *channel_sel;
@@ -415,6 +524,7 @@ int dm_easy_mesh_agent_t::analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_
     em_bss_info_t *bss_info;
     dm_radio_t* radio = NULL;
     em_radio_info_t *radio_info = NULL;
+    int num = 0;
 
     channel_sel = reinterpret_cast<op_class_channel_sel*> (evt->u.raw_buff);
     em_printfout("No of opclass=%d tx=%d", channel_sel->num, channel_sel->tx_power.tx_power_eirp);
@@ -422,6 +532,27 @@ int dm_easy_mesh_agent_t::analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_
     spatial_reuse_req =  const_cast<em_spatial_reuse_req_t*> (&channel_sel->spatial_reuse_req);
     eht_ops =  const_cast<em_eht_operations_t*> (&channel_sel->eht_ops);
 
+    // create orchestration command for channel selection request and send to controller
+    dm_easy_mesh_agent_t  dm;
+    mac_addr_str_t  radio_str;
+
+#if 0
+    //dm.set_msg_id(channel_sel->msg_id);
+    evt->params.u.args.num_args = 1;
+    dm_easy_mesh_t::macbytes_to_string(channel_sel->op_class_info[0].id.ruid, radio_str);
+    em_printfout("%s:%d Received channel selection request for radio with RUID:%s", __func__, __LINE__, radio_str);
+    strncpy(evt->params.u.args.args[0], radio_str, sizeof(em_long_string_t));
+
+    em_cmd_t *tmp = NULL;
+    pcmd[num] = new em_cmd_op_channel_sel_req_t(evt->params, dm);
+    tmp = pcmd[num];
+    num++;
+
+    while ((pcmd[num] = tmp->clone_for_next()) != NULL) {
+        tmp = pcmd[num];
+        num++;
+    }
+#endif
     if (channel_sel->num == 0) {
         // UNEXPECTED: Channel Selection Request will have atleast one OPCLASS in Channel Preference TLV
         em_printfout("Channel Preference TLV contains no op_class entries");
@@ -607,12 +738,35 @@ int dm_easy_mesh_agent_t::analyze_channel_sel_req(em_bus_event_t *evt, wifi_bus_
     }
 
     if(radio_info->init_cfg_done && found_mesh_sta) {
+        // TODO: What should be done here? for now its ignoring the new channel preference.
+        // Do we need to return decline? or accept?
         printf("%s:%d channel change trigger is based on CSA since mesh sta present\n", __func__, __LINE__);
-        return 1;
+        return 0;
     } else {
         radio_info->init_cfg_done = true;
-        return refresh_onewifi_subdoc(desc, bus_hdl, "Radio", get_subdoc_radio_type_for_freq(channel_sel->freq_band));
+        int status = refresh_onewifi_subdoc(desc, bus_hdl, "Radio", get_subdoc_radio_type_for_freq(channel_sel->freq_band));
+        // TODO: If refresh fails, do we need to respond channel selection response with decline code since agent is not able to apply new channel preference?
+        if (status == 0) {
+            em_printfout("Failed to refresh Radio subdoc for channel selection request");
+            return 0;
+        }
     }
+
+    evt->params.u.args.num_args = 1;
+    dm_easy_mesh_t::macbytes_to_string(channel_sel->op_class_info[0].id.ruid, radio_str);
+    em_printfout("%s:%d Received channel selection request for radio with RUID:%s", __func__, __LINE__, radio_str);
+    strncpy(evt->params.u.args.args[0], radio_str, sizeof(em_long_string_t));
+
+    em_cmd_t *tmp = NULL;
+    pcmd[num] = new em_cmd_op_channel_sel_req_t(evt->params, dm);
+    tmp = pcmd[num];
+    num++;
+
+    while ((pcmd[num] = tmp->clone_for_next()) != NULL) {
+        tmp = pcmd[num];
+        num++;
+    }
+    return num;
 
 }
 

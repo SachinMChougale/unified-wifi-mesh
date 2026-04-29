@@ -56,7 +56,7 @@ unsigned int em_orch_t::submit_commands(em_cmd_t *pcmd[], unsigned int num)
         }
     }	
 
-    //printf("%s:%d: Submitted commands count:%d\n", __func__, __LINE__, submitted);
+    printf("%s:%d: Submitted commands count:%d\n", __func__, __LINE__, submitted);
 
     return submitted;
 }
