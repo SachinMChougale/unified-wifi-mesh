@@ -586,12 +586,19 @@ void em_t::proto_run()
                     // proto_process(&cevnt);
                     em_cmd_event_t cevnt;
                     memcpy(&cevnt, &evt->u.cevt, sizeof(cevnt)); // safe copy
-                    proto_process(&cevnt); // pass pointer
+                    proto_process(&cevnt);                       // pass pointer
+                } else if (evt->type == em_event_type_orch) {
+                    if (m_service_type == em_service_type_agent) {
+                        handle_agent_state();
+                    } else if (m_service_type == em_service_type_ctrl) {
+                        handle_ctrl_state();
+                    }
                 }
                 free(evt);
                 pthread_mutex_lock(&m_iq.lock);
             }
         } else if (rc == ETIMEDOUT) {
+            // TODO: Do we need to keep this?
             pthread_mutex_unlock(&m_iq.lock);
             proto_timeout();
             pthread_mutex_lock(&m_iq.lock);

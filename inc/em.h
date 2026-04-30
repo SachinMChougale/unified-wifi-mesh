@@ -514,15 +514,21 @@ public:
 	em_state_t get_state() { return m_sm.get_state(); }
     
 	/**!
-	 * @brief Sets the state of the state machine.
+	 * @brief Sets the state of the state machine and pushes an orchestration event to the queue.
 	 *
-	 * This function updates the state of the state machine to the specified state.
+	 * This function updates the state of the state machine to the specified state and
+	 * then creates an orchestration event which is pushed onto the event queue for processing.
 	 *
 	 * @param[in] state The new state to set for the state machine.
 	 *
 	 * @note Ensure that the state provided is valid and within the expected range of states.
 	 */
-	void set_state(em_state_t state) {  m_sm.set_state(state); }
+	void set_state(em_state_t state) {
+		m_sm.set_state(state);
+		em_event_t *evt = static_cast<em_event_t *>(malloc(sizeof(em_event_t)));
+		evt->type = em_event_type_orch;
+		push_to_queue(evt);
+	}
 	
 	/**!
 	 * @brief Retrieves the service type.

@@ -555,6 +555,12 @@ int em_mgr_t::start()
                     handle_event(evt);
                 } else if (evt->type == em_event_type_nb) {
                     handle_event(evt);
+                } else if (evt->type == em_event_type_orch) {
+                    // Call orchestration handle timeout
+                    em_orch_t *orch = get_orch();
+                    if (orch != nullptr) {
+                        orch->handle_timeout();
+                    }
                 }
                 free(evt);
                 pthread_mutex_lock(&m_queue.lock);
