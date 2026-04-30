@@ -333,6 +333,15 @@ public:
 		return do_start_dpp_onboarding;
 	}
 
+	/**!
+	 * @brief Get the orchestration instance.
+	 *
+	 * This function returns a pointer to the orchestration instance.
+	 *
+	 * @return em_orch_t* Pointer to the orchestration instance.
+	 */
+	em_orch_t *get_orch() override { return m_orch; }
+
 	/**
 	 * @brief Refresh the OneWifi subdoc with current information + provided data and send to OneWifi.
 	 *

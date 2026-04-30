@@ -47,6 +47,7 @@
 #include <sys/types.h>
 #include <ifaddrs.h>
 #include "em.h"
+#include "em_mgr.h"
 #include "em_cmd.h"
 #include "em_cmd_exec.h"
 #include "util.h"
@@ -78,6 +79,23 @@ ec_manager_t &em_t::get_ec_mgr()
     }
     return *m_ec_manager;
 }
+#if 0
+void em_t::set_state(em_state_t state)
+{
+    m_sm.set_state(state);
+    em_printfout("%s:%d: State changed to %s, posting orchestration event for radio mac %s\n",
+        __func__, __LINE__, em_t::state_2_str(state), util::mac_to_string(get_radio_interface_mac()).c_str());
+    // signal protocol handler to run after state change
+    em_event_t *evt = static_cast<em_event_t *>(malloc(sizeof(em_event_t)));
+    evt->type = em_event_type_orch;
+    push_to_queue(evt);
+
+    // signal orchestration handler to check if any orchestration changes needed after state change
+    em_event_t *evt1 = static_cast<em_event_t *>(malloc(sizeof(em_event_t)));
+    evt1->type = em_event_type_orch;
+    m_mgr->push_to_queue(evt1);
+}
+#endif
 
 void em_t::orch_execute(em_cmd_t *pcmd)
 {
@@ -586,12 +604,13 @@ void em_t::proto_run()
                     // proto_process(&cevnt);
                     em_cmd_event_t cevnt;
                     memcpy(&cevnt, &evt->u.cevt, sizeof(cevnt)); // safe copy
-                    proto_process(&cevnt); // pass pointer
-                }
+                    proto_process(&cevnt);                       // pass pointer
+                } 
                 free(evt);
                 pthread_mutex_lock(&m_iq.lock);
             }
         } else if (rc == ETIMEDOUT) {
+            // TODO: Do we need to keep this?
             pthread_mutex_unlock(&m_iq.lock);
             proto_timeout();
             pthread_mutex_lock(&m_iq.lock);

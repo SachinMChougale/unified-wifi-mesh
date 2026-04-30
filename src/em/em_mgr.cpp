@@ -548,9 +548,22 @@ int em_mgr_t::start()
                     continue;
                 }
                 pthread_mutex_unlock(&m_queue.lock);
-                if (((evt->type == em_event_type_bus) && ((evt->u.bevt.type == em_bus_event_type_reset) ||
+                if (evt->type == em_event_type_orch) {
+                    if (is_data_model_initialized() == true) {
+                        if (started == false) {
+                            start_complete();
+                            started = true;
+                        }
+                        //handle_timeout();
+                        // Call orchestration handle timeout
+                        em_orch_t *orch = get_orch();
+                        if (orch != nullptr) {
+                            orch->handle_timeout();
+                        }
+                    }
+                } else if (((evt->type == em_event_type_bus) && ((evt->u.bevt.type == em_bus_event_type_reset) ||
                       (evt->u.bevt.type == em_bus_event_type_get_reset))) ||
-						(is_data_model_initialized() == true)) {
+                        (is_data_model_initialized() == true)) {
 
                     handle_event(evt);
                 } else if (evt->type == em_event_type_nb) {

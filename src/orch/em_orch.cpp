@@ -141,6 +141,14 @@ bool em_orch_t::submit_command(em_cmd_t *pcmd)
     } else {
         queue_push(m_pending, pcmd);
         push_stats(pcmd);
+        // trigger orchestration event to process the command
+        em_event_t *evt = static_cast<em_event_t *>(malloc(sizeof(em_event_t)));
+        evt->type = em_event_type_orch;
+        m_mgr->push_to_queue(evt);
+        
+        em_printfout("%s:%d: Submitted orchestration:%s(%s) with %d candidates\n",
+            __func__, __LINE__, em_cmd_t::get_orch_op_str(pcmd->get_orch_op()),
+            em_cmd_t::get_cmd_type_str(pcmd->m_type), queue_count(pcmd->m_em_candidates));
         submitted = true;
     }
 
@@ -301,20 +309,22 @@ bool em_orch_t::orchestrate(em_cmd_t *pcmd, em_t *em)
     mac_addr_str_t	mac_str;
 
     orch_state = em->get_orch_state();
-
     dm_easy_mesh_t::macbytes_to_string(em->get_radio_interface_mac(), mac_str);
+    em_printfout("%s:%d: Orchestration state is %d for em:%s orchestration:%s(%s) em state %s\n",
+        __func__, __LINE__, orch_state, mac_str, em_cmd_t::get_orch_op_str(pcmd->get_orch_op()),
+        em_cmd_t::get_cmd_type_str(pcmd->m_type), em_t::state_2_str(em->get_state()));
 
     if (orch_state == em_orch_state_pending) {
         if (is_em_ready_for_orch_exec(pcmd, em) == true) {
             // ask em to execute the command
-            // em_printfout("%s:%d: Start orchestartion:%s(%s), em state:%s\n", __func__, __LINE__, 
-			// 		em_cmd_t::get_orch_op_str(pcmd->get_orch_op()), em_cmd_t::get_cmd_type_str(pcmd->m_type), 
-			// 		em_t::state_2_str(em->get_state()));
+            em_printfout("%s:%d: Start orchestartion:%s(%s), em state:%s\n", __func__, __LINE__, 
+			 		em_cmd_t::get_orch_op_str(pcmd->get_orch_op()), em_cmd_t::get_cmd_type_str(pcmd->m_type), 
+			 		em_t::state_2_str(em->get_state()));
             em->orch_execute(pcmd);
         } else {
-            // em_printfout("%s:%d: skipping orchestration:%s(%s) because of incorrect state, state:%s\n", __func__, __LINE__, 
-			// 		em_cmd_t::get_orch_op_str(pcmd->get_orch_op()), em_cmd_t::get_cmd_type_str(pcmd->m_type), 
-			// 		em_t::state_2_str(em->get_state()));
+             em_printfout("%s:%d: skipping orchestration:%s(%s) because of incorrect state, state:%s\n", __func__, __LINE__, 
+			 		em_cmd_t::get_orch_op_str(pcmd->get_orch_op()), em_cmd_t::get_cmd_type_str(pcmd->m_type), 
+			 		em_t::state_2_str(em->get_state()));
             update_stats(pcmd);
             orch_transient(pcmd, em);
         }
