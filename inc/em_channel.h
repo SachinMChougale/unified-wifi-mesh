@@ -565,6 +565,7 @@ public:
 	 *
 	 * @param[in] buff Pointer to the buffer containing the channel selection request data.
 	 * @param[in] len Length of the data in the buffer.
+	 * @param[out] code Pointer to the channel selection response code.
 	 *
 	 * @returns int Status code indicating success or failure of the operation.
 	 * @retval 0 Success.
@@ -572,7 +573,7 @@ public:
 	 *
 	 * @note Ensure that the buffer is properly initialized and contains valid data before calling this function.
 	 */
-	int handle_channel_sel_req(unsigned char *buff, unsigned int len);
+	int handle_channel_sel_req(unsigned char *buff, unsigned int len, em_chan_sel_resp_code_type_t *code);
     
 	/**!
 	 * @brief Handles the channel preference TLV.

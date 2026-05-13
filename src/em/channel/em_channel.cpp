@@ -926,15 +926,18 @@ int em_channel_t::send_channel_sel_response_msg(em_chan_sel_resp_code_type_t cod
     tmp += (sizeof (em_tlv_t));
     len += (sizeof (em_tlv_t));
     if (em_msg_t(em_msg_type_channel_sel_rsp, em_profile_type_3, buff, len).validate(errors) == 0) {
-        printf("Channel Selection Response msg failed validation in tnx end\n");
+        em_printfout("Channel Selection Response msg failed validation in tnx end\n");
         return -1;
     }
 
     if (send_frame(buff, len)  < 0) {
-        printf("%s:%d: Channel Selection Response msg failed, error:%d\n", __func__, __LINE__, errno);
+        em_printfout("Channel Selection Response msg failed, error:%d\n", errno);
         return -1;
     }
-
+    // After response transmission, move to the response-sent state.
+    // A radio subdoc callback for the same band should later trigger the Operating Channel Report.
+    set_state(em_state_agent_channel_sel_resp_sent);
+    em_printfout("Channel Selection Response message sent (msg_id: 0x%04x, response code: %d)\n", msg_id, code);
     return static_cast<int> (len);
 
 }
@@ -1069,16 +1072,16 @@ int em_channel_t::send_operating_channel_report_msg()
     tmp += (sizeof (em_tlv_t));
     len += (sizeof (em_tlv_t));
     if (em_msg_t(em_msg_type_op_channel_rprt, em_profile_type_3, buff, len).validate(errors) == 0) {
-        printf("Operating Channel Report msg failed validation in tnx end\n");   
+        em_printfout("Operating Channel Report msg failed validation in tnx end\n");   
         return -1;
     }
 
     if (send_frame(buff, len)  < 0) {
-        printf("%s:%d:  Operating Channel Report msg failed, error:%d\n", __func__, __LINE__, errno);
+        em_printfout("Operating Channel Report msg failed, error:%d\n", errno);
         return -1;
     }
     dm_easy_mesh_t::macbytes_to_string(get_radio_interface_mac(), mac_str);
-    printf("%s:%d Operating Channel Report msg send for %s \n", __func__, __LINE__,mac_str);
+    em_printfout("Operating Channel Report msg send for %s \n",mac_str);
     return static_cast<int> (len);
 
 }
@@ -1800,6 +1803,17 @@ int em_channel_t::handle_channel_pref_tlv(unsigned char *buff, op_class_channel_
                         op_class->op_class_info[j].channel_pref[existing_channels_count + added_channels_count] = pref_bits;
                     }
 
+                    // if band is 5GHz and DFS is disabled, reject DFS channels (52-144) in preference
+                    if ((get_band() == em_freq_band_5 &&
+                         get_data_model() != NULL &&
+                         get_data_model()->m_device.m_device_info.dfs_enable == false) && (channel_pref != NULL &&
+                         channel_pref->num > 0 && channel_pref->channels.channel[0] >= 52) &&
+                        (channel_pref->channels.channel[0] <= 144)) {
+                        em_printfout("Received DFS channel %d in preference, which is not allowed. Stop parsing further and send decline response\n",
+                                     channel_pref->channels.channel[0]);
+                        return -1;
+                    }
+
                     // Only increment by appended count
                     // If count exceeds max channels then remaining channels are dropped.
                     op_class->op_class_info[j].num_channels += added_channels_count;
@@ -1910,20 +1924,26 @@ int em_channel_t::handle_channel_pref_query(unsigned char *buff, unsigned int le
 	return 0;
 }
 
-int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len)
+int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len, em_chan_sel_resp_code_type_t *code)
 {
     em_tlv_t    *tlv;
     int tlv_len;
+    em_cmdu_t  *cmdu;
 
     op_class_channel_sel op_class;
 
     memset(&op_class, 0, sizeof(op_class_channel_sel));
+    cmdu = reinterpret_cast<em_cmdu_t *> (buff + sizeof(em_raw_hdr_t));
     tlv = reinterpret_cast<em_tlv_t *> (buff + sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t));
     tlv_len = static_cast<int> (len - (sizeof(em_raw_hdr_t) + sizeof(em_cmdu_t)));
 
     while ((tlv->type != em_tlv_type_eom) && (tlv_len > 0)) {
         if (tlv->type == em_tlv_type_channel_pref) {
-            handle_channel_pref_tlv(tlv->value, &op_class);
+            if (handle_channel_pref_tlv(tlv->value, &op_class) != 0) {
+                *code = em_chan_sel_resp_code_type_decline;
+            } else {
+                *code = em_chan_sel_resp_code_type_accept;
+            }
         }
         if (tlv->type == em_tlv_type_tx_power) {
             memcpy(&op_class.tx_power, tlv->value, sizeof(em_tx_power_limit_t));
@@ -1934,11 +1954,15 @@ int em_channel_t::handle_channel_sel_req(unsigned char *buff, unsigned int len)
     }
 
 	op_class.freq_band = get_band();
-   
+    m_chan_req_msg_id = ntohs(cmdu->id);
+    // If the channel selection request is declined by agent, we still need to send subdoc to OneWifi with old channel preference.
+    // This helps to complete selection procedure by sending back the OCR with old preference.
 	get_mgr()->io_process(em_bus_event_type_channel_sel_req, reinterpret_cast<unsigned char *> (&op_class), sizeof(op_class_channel_sel));
-    
-	printf("%s:%d Received channel selection request \n",__func__, __LINE__);
-	set_state(em_state_agent_channel_select_configuration_pending);
+
+    // Set state to indicate that the agent has received a Channel Selection Request and is waiting for Onewifi Status Event.
+    // The response will be generated when OneWiFi sends back Status for SubDocName "ChannelSelectionResponse".
+    set_state(em_state_agent_channel_sel_req_rcvd);
+	em_printfout("Received channel selection request\n");
     return 0;
 }
 
@@ -2272,9 +2296,10 @@ void em_channel_t::process_msg(unsigned char *data, unsigned int len)
 	    break;
 
         case em_msg_type_channel_sel_req:
-            if ((get_service_type() == em_service_type_agent)  && ((get_state() < em_state_agent_channel_select_configuration_pending) || (get_state() >= em_state_agent_configured))) {
-                handle_channel_sel_req(data, len);
-                send_channel_sel_response_msg(em_chan_sel_resp_code_type_accept, ntohs(cmdu->id));
+            if ((get_service_type() == em_service_type_agent)  && ((get_state() < em_state_agent_channel_sel_req_rcvd) || (get_state() >= em_state_agent_configured))) {
+                em_chan_sel_resp_code_type_t resp_code = em_chan_sel_resp_code_type_accept;
+                handle_channel_sel_req(data, len, &resp_code);
+                send_channel_sel_response_msg(resp_code, ntohs(cmdu->id));
             }
             break;
 
@@ -2338,14 +2363,6 @@ void em_channel_t::process_state()
                 em_radios.clear();
             }
             break;
-        		
-        case em_state_agent_channel_report_pending:
-            if (get_service_type() == em_service_type_agent) {
-                send_operating_channel_report_msg();
-                printf("%s:%d operating_channel_report_msg send\n", __func__, __LINE__);
-                set_state(em_state_agent_configured);
-            }
-            break;
 
 		case em_state_agent_channel_scan_result_pending:
             if (get_service_type() == em_service_type_agent) {
@@ -2357,7 +2374,7 @@ void em_channel_t::process_state()
             }
 			break;
         default:
-            printf("%s:%d: unhandled case %s\n", __func__, __LINE__, em_t::state_2_str(get_state()));
+            printf("%s:%d: unhandled case %s for radio %s\n", __func__, __LINE__, em_t::state_2_str(get_state()), util::mac_to_string(get_radio_interface_mac()).c_str());
             break;
 
     }

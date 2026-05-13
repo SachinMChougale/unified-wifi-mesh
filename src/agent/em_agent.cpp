@@ -214,6 +214,8 @@ void em_agent_t::handle_channel_sel_req(em_bus_event_t *evt)
     unsigned int num;
     wifi_bus_desc_t *desc;
     raw_data_t l_bus_data;
+    em_cmd_t *pcmd[EM_MAX_CMD] = {NULL};
+
 
     if((desc = get_bus_descriptor()) == NULL) {
        printf("descriptor is null");
@@ -221,8 +223,10 @@ void em_agent_t::handle_channel_sel_req(em_bus_event_t *evt)
 
     if (m_orch->is_cmd_type_in_progress(evt) == true) {
         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
-    } else if ((num = m_data_model.analyze_channel_sel_req(evt, desc, &m_bus_hdl)) == 0) {
-            printf("handle_channel_sel_req complete");
+    } else if ((num = m_data_model.analyze_channel_sel_req(evt, desc, &m_bus_hdl, pcmd)) <= 0) {
+         printf("analyze_channel_sel_req failed\n");
+    } else if (m_orch->submit_commands(pcmd, num) > 0) {
+        printf("handle_channel_sel_req complete");
     }
 }
 
@@ -307,7 +311,7 @@ void em_agent_t::handle_onewifi_radio_cb(em_bus_event_t *evt)
 
     if (m_orch->is_cmd_type_in_progress(evt) == true) {
         m_agent_cmd->send_result(em_cmd_out_status_prev_cmd_in_progress);
-    } else if ((num = m_data_model.analyze_onewifi_radio_cb(evt, pcmd)) == 0) {
+    } else if ((num = m_data_model.analyze_onewifi_radio_cb(evt, pcmd, m_em_map)) == 0) {
         em_printfout("analyze_onewifi_radio_cb completed");
     } else if (m_orch->submit_commands(pcmd, num) > 0) {
         em_printfout("submitted command for orchestration");
@@ -1427,6 +1431,7 @@ void em_agent_t::onewifi_cb(char *event_name, bus_data_prop_t *data, void *userD
 		em_printfout("Error parsing JSON");
         return;
 	}
+
     cJSON *subdoc_name = cJSON_GetObjectItemCaseSensitive(json, "SubDocName");
     if (!cJSON_IsString(subdoc_name) || (subdoc_name->valuestring == NULL)) {
         cJSON_Delete(json);
