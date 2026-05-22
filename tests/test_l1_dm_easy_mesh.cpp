@@ -2831,6 +2831,84 @@ TEST(dm_easy_mesh_t, decode_config_unsupported_key)
     std::cout << "Exiting decode_config_unsupported_key test" << std::endl;
 }
 
+TEST(dm_easy_mesh_t, decode_config_set_channel_radio_level_tr181)
+{
+    dm_easy_mesh_t obj;
+    const char json[] =
+        "{ \"wfa-dataelements:SetAnticipatedChannelPreference\": {"
+        "\"Network\": {"
+        "\"ID\": \"TestNetwork\","
+        "\"DeviceList\": ["
+        "{ \"ID\": \"AA:BB:CC:DD:EE:FF\","
+        "  \"RadioList\": ["
+        "    { \"ID\": \"11:22:33:44:55:66\","
+        "      \"AnticipatedChannelPreference\": ["
+        "        { \"Class\": 1, \"ChannelList\": [1,6,11], \"ChannelPrefList\": [0,0,0] }"
+        "      ] }"
+        "  ] }"
+        "] } }";
+
+    size_t len = strlen(json) + 1;
+    em_subdoc_info_t *subdoc = reinterpret_cast<em_subdoc_info_t *>(calloc(1, sizeof(em_subdoc_info_t) + len));
+    ASSERT_NE(subdoc, nullptr);
+    memcpy(subdoc->buff, json, len);
+
+    unsigned int num_devices = 0;
+    em_cmd_args_t args = {};
+    args.num_args = 1;
+    strncpy(args.args[0], "tr181", sizeof(args.args[0]) - 1);
+    args.args[0][sizeof(args.args[0]) - 1] = '\0';
+
+    int ret = obj.decode_config(subdoc, "SetAnticipatedChannelPreference", 0, &num_devices, &args);
+    EXPECT_EQ(ret, 0);
+    EXPECT_EQ(num_devices, 1u);
+    EXPECT_EQ(obj.m_num_opclass, 1u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.id.type, em_op_class_type_anticipated);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.id.op_class, 1u);
+
+    char ruid_str[18] = {0};
+    dm_easy_mesh_t::macbytes_to_string(obj.m_op_class[0].m_op_class_info.id.ruid, ruid_str);
+    EXPECT_STREQ(ruid_str, "11:22:33:44:55:66");
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.num_channels, 3u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.channels[0], 1u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.channel_pref[2], 0u);
+
+    free(subdoc);
+}
+
+TEST(dm_easy_mesh_t, decode_config_set_channel_network_level_rdklb_cli)
+{
+    dm_easy_mesh_t obj;
+    const char json[] =
+        "{ \"wfa-dataelements:SetAnticipatedChannelPreference\": {"
+        "\"Network\": {"
+        "\"ID\": \"TestNetwork\","
+        "\"AnticipatedChannelPreference\": ["
+        "    { \"Class\": 1, \"ChannelList\": [1,6,11], \"ChannelPrefList\": [0,0,0] }"
+        "  ],"
+        "\"DeviceList\": ["
+        "    { \"ID\": \"AA:BB:CC:DD:EE:FF\" }"
+        "  ]"
+        "} }";
+
+    size_t len = strlen(json) + 1;
+    em_subdoc_info_t *subdoc = reinterpret_cast<em_subdoc_info_t *>(calloc(1, sizeof(em_subdoc_info_t) + len));
+    ASSERT_NE(subdoc, nullptr);
+    memcpy(subdoc->buff, json, len);
+
+    unsigned int num_devices = 0;
+    int ret = obj.decode_config(subdoc, "SetAnticipatedChannelPreference", 0, &num_devices, nullptr);
+    EXPECT_EQ(ret, 0);
+    EXPECT_EQ(num_devices, 1u);
+    EXPECT_EQ(obj.m_num_opclass, 1u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.id.type, em_op_class_type_anticipated);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.id.op_class, 1u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.num_channels, 3u);
+    EXPECT_EQ(obj.m_op_class[0].m_op_class_info.channels[2], 11u);
+
+    free(subdoc);
+}
+
 /**
  * @brief Validate decode_config method behavior when provided a NULL subdocument.
  *

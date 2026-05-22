@@ -746,7 +746,7 @@ int dm_easy_mesh_t::decode_num_devices(em_subdoc_info_t *subdoc)
 }
 
 
-int dm_easy_mesh_t::decode_config(em_subdoc_info_t *subdoc, const char *str, unsigned int index, unsigned int *num)
+int dm_easy_mesh_t::decode_config(em_subdoc_info_t *subdoc, const char *str, unsigned int index, unsigned int *num, em_cmd_args_t *args)
 {
 	em_long_string_t key;
 
@@ -763,10 +763,10 @@ int dm_easy_mesh_t::decode_config(em_subdoc_info_t *subdoc, const char *str, uns
         return decode_config_set_ssid(subdoc, key);
     } else if (strncmp(str, "SetAnticipatedChannelPreference", strlen("SetAnticipatedChannelPreference")) == 0) {
         snprintf(key, sizeof(em_long_string_t), "wfa-dataelements:%s", str);
-        return decode_config_set_channel(subdoc, key, index, num);
+        return decode_config_set_channel(subdoc, key, index, num, args);
     } else if (strncmp(str, "ChannelScanRequest", strlen("ChannelScanRequest")) == 0) {
         snprintf(key, sizeof(em_long_string_t), "wfa-dataelements:%s", str);
-        return decode_config_set_channel(subdoc, key, index, num);
+        return decode_config_set_channel(subdoc, key, index, num, args);
     } else if (strncmp(str, "SetPolicy", strlen("SetPolicy")) == 0) {
         snprintf(key, sizeof(em_long_string_t), "wfa-dataelements:%s", str);
         return decode_config_set_policy(subdoc, key, index, num);
@@ -1160,7 +1160,7 @@ int dm_easy_mesh_t::decode_config_set_policy(em_subdoc_info_t *subdoc, const cha
     return 0;
 }
 
-int dm_easy_mesh_t::decode_config_set_channel(em_subdoc_info_t *subdoc, const char *key, unsigned int index, unsigned int *num)
+int dm_easy_mesh_t::decode_config_set_channel(em_subdoc_info_t *subdoc, const char *key, unsigned int index, unsigned int *num, em_cmd_args_t *args)
 {
 #define KEY_CHANNEL_ANTICIPATED "wfa-dataelements:SetAnticipatedChannelPreference"
 #define KEY_CHANNEL_SCANREQUEST "wfa-dataelements:ChannelScanRequest"
@@ -1288,8 +1288,118 @@ int dm_easy_mesh_t::decode_config_set_channel(em_subdoc_info_t *subdoc, const ch
             return EM_PARSE_ERR_GEN;
         }
     } else {
-        if ((target_arr_obj = cJSON_GetObjectItem(dev_obj, target_key)) == NULL) {
-            em_printfout("'%s' not found in Device", target_key);
+        bool radio_level_request = false;
+        bool radio_level_target_found = false;
+        mac_address_t radio_mac = {0};
+
+        radio_arr_obj = cJSON_GetObjectItem(dev_obj, "RadioList");
+        if (radio_arr_obj != NULL) {
+            if ((args != NULL && args->num_args > 0 && strcmp(args->args[0], "tr181") == 0) ||
+                (cJSON_GetObjectItem(dev_obj, target_key) == NULL)) {
+                radio_level_request = true;
+            }
+        }
+        
+        // Handling TR181 command
+        if (radio_arr_obj != NULL && radio_level_request) {
+            m_num_opclass = 0;
+            int radio_count = cJSON_GetArraySize(radio_arr_obj);
+            for (i = 0; i < radio_count; i++) {
+                if ((radio_obj = cJSON_GetArrayItem(radio_arr_obj, i)) == NULL) {
+                    em_printfout("Invalid radio index: %d", i);
+                    cJSON_Delete(parent_obj);
+                    return EM_PARSE_ERR_GEN;
+                }
+                if ((radio_id_obj = cJSON_GetObjectItem(radio_obj, "ID")) == NULL) {
+                    em_printfout("'ID' not found in Radio: %s", subdoc->buff);
+                    cJSON_Delete(parent_obj);
+                    return EM_PARSE_ERR_GEN;
+                }
+                if ((radio_id = cJSON_GetStringValue(radio_id_obj)) == NULL) {
+                    em_printfout("Radio ID is invalid: %s", subdoc->buff);
+                    cJSON_Delete(parent_obj);
+                    return EM_PARSE_ERR_GEN;
+                }
+                if ((target_arr_obj = cJSON_GetObjectItem(radio_obj, target_key)) == NULL) {
+                    continue;
+                }
+                if (cJSON_GetArraySize(target_arr_obj) == 0) {
+                    continue;
+                }
+
+                radio_level_target_found = true;
+                dm_easy_mesh_t::string_to_macbytes(radio_id, radio_mac);
+                memcpy(m_radio[0].m_radio_info.intf.mac, radio_mac, sizeof(mac_address_t));
+                m_num_radios = 1;
+
+                arr_size = cJSON_GetArraySize(target_arr_obj);
+                for (j = 0; j < arr_size; j++) {
+                    if ((target_obj = cJSON_GetArrayItem(target_arr_obj, j)) == NULL) {
+                        em_printfout("Invalid input index: %d", j);
+                        cJSON_Delete(parent_obj);
+                        return EM_PARSE_ERR_GEN;
+                    }
+
+                    memset(&m_op_class[m_num_opclass].m_op_class_info, 0, sizeof(em_op_class_info_t));
+                    m_op_class[m_num_opclass].m_op_class_info.id.type = type;
+                    m_op_class[m_num_opclass].m_op_class_info.op_class = static_cast<unsigned int> (cJSON_GetNumberValue(cJSON_GetObjectItem(target_obj, "Class")));
+                    m_op_class[m_num_opclass].m_op_class_info.id.op_class = m_op_class[m_num_opclass].m_op_class_info.op_class;
+                    memcpy(m_op_class[m_num_opclass].m_op_class_info.id.ruid, radio_mac, sizeof(mac_address_t));
+
+                    if ((channel_arr_obj = cJSON_GetObjectItem(target_obj, "ChannelList")) == NULL) {
+                        em_printfout("ChannelList not present");
+                        cJSON_Delete(parent_obj);
+                        return EM_PARSE_ERR_GEN;
+                    }
+
+                    m_op_class[m_num_opclass].m_op_class_info.num_channels = 0;
+                    if (type != em_op_class_type_scan_param) {
+                        if ((channel_pref_arry_obj = cJSON_GetObjectItem(target_obj, "ChannelPrefList")) == NULL) {
+                            em_printfout("ChannelPrefList not present");
+                            cJSON_Delete(parent_obj);
+                            return EM_PARSE_ERR_GEN;
+                        }
+                        if (cJSON_GetArraySize(channel_pref_arry_obj) != cJSON_GetArraySize(channel_arr_obj)) {
+                            em_printfout("ChannelPrefList size is not equal to ChannelList");
+                            cJSON_Delete(parent_obj);
+                            return EM_PARSE_ERR_GEN;
+                        }
+                        for (int k = 0; k < cJSON_GetArraySize(channel_arr_obj); k++) {
+                            m_op_class[m_num_opclass].m_op_class_info.channels[m_op_class[m_num_opclass].m_op_class_info.num_channels] = static_cast<unsigned int> (cJSON_GetNumberValue(cJSON_GetArrayItem(channel_arr_obj, k)));
+                            m_op_class[m_num_opclass].m_op_class_info.channel_pref[m_op_class[m_num_opclass].m_op_class_info.num_channels] = static_cast<unsigned int> (cJSON_GetNumberValue(cJSON_GetArrayItem(channel_pref_arry_obj, k)));
+                            m_op_class[m_num_opclass].m_op_class_info.num_channels++;
+                        }
+                    } else {
+                        for (int k = 0; k < cJSON_GetArraySize(channel_arr_obj); k++) {
+                            m_op_class[m_num_opclass].m_op_class_info.channels[m_op_class[m_num_opclass].m_op_class_info.num_channels] = static_cast<unsigned int> (cJSON_GetNumberValue(cJSON_GetArrayItem(channel_arr_obj, k)));
+                            m_op_class[m_num_opclass].m_op_class_info.num_channels++;
+                        }
+                    }
+
+                    m_num_opclass++;
+                }
+            }
+
+            if (radio_level_target_found) {
+                if (m_num_opclass == 0) {
+                    em_printfout("OpClass list is empty");
+                    cJSON_Delete(parent_obj);
+                    return EM_PARSE_ERR_GEN;
+                }
+
+                cJSON_Delete(parent_obj);
+                return 0;
+            }
+        }
+
+        // Network level request
+        target_arr_obj = cJSON_GetObjectItem(net_obj, target_key);
+        if (target_arr_obj == NULL) {
+            target_arr_obj = cJSON_GetObjectItem(dev_obj, target_key);
+        }
+
+        if (target_arr_obj == NULL) {
+            em_printfout("'%s' not found in Network or Device", target_key);
             cJSON_Delete(parent_obj);
             return EM_PARSE_ERR_GEN;
         }

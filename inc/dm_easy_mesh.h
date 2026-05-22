@@ -371,7 +371,7 @@ public:
 	 * @note Ensure that the subdoc pointer is valid and points to a properly
 	 * initialized em_subdoc_info_t structure before calling this function.
 	 */
-	int decode_config(em_subdoc_info_t *subdoc, const char *key, unsigned int index = 0, unsigned int *num = NULL);
+	int decode_config(em_subdoc_info_t *subdoc, const char *key, unsigned int index = 0, unsigned int *num = NULL, em_cmd_args_t *args = NULL);
     
 	/**!
 	 * @brief Decodes the configuration reset for the given subdocument and key.
@@ -436,6 +436,7 @@ public:
 	 * @param[in] key The key associated with the configuration setting.
 	 * @param[in] index The index at which the channel configuration is to be set.
 	 * @param[out] num Pointer to an unsigned integer where the number of channels processed will be stored.
+	 * @param[in] args Optional command arguments used for TR-181 channel selection semantics.
 	 *
 	 * @returns int Status code indicating success or failure of the operation.
 	 * @retval 0 on success.
@@ -443,7 +444,7 @@ public:
 	 *
 	 * @note Ensure that the subdoc and num pointers are valid before calling this function.
 	 */
-	int decode_config_set_channel(em_subdoc_info_t *subdoc, const char *key, unsigned int index, unsigned int *num);
+	int decode_config_set_channel(em_subdoc_info_t *subdoc, const char *key, unsigned int index, unsigned int *num, em_cmd_args_t *args = NULL);
     
 	/**!
 	 * @brief Decodes the configuration and sets the policy based on the provided subdocument information.

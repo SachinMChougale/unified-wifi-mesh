@@ -716,6 +716,25 @@ public:
 	static bus_error_t cmd_channelscan (const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle);
 
 	/**!
+	 * @brief Handles the bus ChannelSelect method request.
+	 *
+	 * Validates ChannelSelect input properties, dispatches the request to the EasyMesh
+	 * controller, and optionally populates response properties for the caller.
+	 *
+	 * @param[in] method_name Bus method name (...Network.Device.{i}.Radio.{i}.ChannelSelect).
+	 * @param[in] input_params Linked list of input properties carrying the request payload.
+	 * @param[out] output_params Populated with response properties when provided.
+	 * @param[in] async_handle Async context handle when the bus call is asynchronous.
+	 *
+	 * @returns bus_error_t
+	 * @retval bus_error_none on successful ChannelSelect handling.
+	 * @retval bus_error_failed on validation or controller execution failure.
+	 *
+	 * @note Input property ownership remains with the caller; this function does not free them.
+	 */
+	static bus_error_t cmd_channelselect(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle);
+
+	/**!
 	 * @brief Handles the bus ClientSteer method request.
 	 *
 	 * Validates ClientSteer input properties, dispatches the request to the EasyMesh
