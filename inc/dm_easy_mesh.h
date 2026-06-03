@@ -91,6 +91,7 @@ public:
     unsigned int    m_num_assoc_sta_mld;
     dm_assoc_sta_mld_t m_assoc_sta_mld[EM_MAX_ASSOC_STA_MLD];
     dm_tid_to_link_t m_tid_to_link;
+	bool	from_tr181 = false;
 
 public:
 
@@ -436,6 +437,7 @@ public:
 	 * @param[in] key The key associated with the configuration setting.
 	 * @param[in] index The index at which the channel configuration is to be set.
 	 * @param[out] num Pointer to an unsigned integer where the number of channels processed will be stored.
+	 * @param[in] args Optional command arguments used for TR-181 channel selection semantics.
 	 *
 	 * @returns int Status code indicating success or failure of the operation.
 	 * @retval 0 on success.
@@ -2632,6 +2634,14 @@ public:
 	 * @note Ensure that the array is properly initialized before calling this function.
 	 */
 	void set_channels_list(dm_op_class_t op_class[], unsigned int num);
+
+	/**!
+	 * @brief Update global (broadcast) operating-class entries.
+	 *
+	 * Copies anticipated/global op-class definitions (ruid == ff:ff:ff:ff:ff:ff)
+	 * into this data-model's op-class list so global entries are applied.
+	 */
+	void update_global_op_class_entries(dm_op_class_t op_class[], unsigned int num, mac_address_t global_mac);
 	
 	/**!
 	 * @brief Sets the policy for the device management.

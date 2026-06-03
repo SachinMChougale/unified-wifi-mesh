@@ -156,6 +156,8 @@ int em_cmd_ctrl_t::send_result(em_cmd_out_status_t status)
 	sd = SSL_get_fd(m_ssl);
 	SSL_shutdown(m_ssl);
 	SSL_free(m_ssl);
+	m_ssl = NULL;
+
 	close(sd);
 
 	free(str);

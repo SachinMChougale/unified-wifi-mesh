@@ -37,6 +37,7 @@
 #include "dm_easy_mesh.h"
 #include "em_ctrl.h"
 #include "tr_181.h"
+#include "util.h"
 #include <cjson/cJSON.h>
 #include "em_cmd_exec.h"
 #include "em_cmd_reset.h"
@@ -840,6 +841,389 @@ invalid:
 
 cleanup:
     cJSON_Delete(root);
+    if (output_params) {
+        *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+    }
+    return rc;
+}
+
+bus_error_t em_ctrl_t::cmd_channelselect(const char *method_name, const bus_data_prop_t *input_params, bus_data_prop_t **output_params, void *async_handle)
+{
+    (void)method_name;
+    (void)async_handle;
+    const char *name = method_name;
+    const char *param;
+    char instance[MAX_INSTANCE_LEN] = { 0 };
+    bool is_num;
+    const bus_data_prop_t *prop = NULL;
+    em_subdoc_info_t *subdoc = NULL;
+    unsigned char buff[sizeof(em_subdoc_info_t) + EM_IO_BUFF_SZ];
+    cJSON *root = NULL, *json = NULL, *net_obj = NULL;
+    cJSON *dev_list = NULL, *dev_obj = NULL, *radio_list = NULL, *radio_obj = NULL;
+    cJSON *class_arr = NULL, *class_obj = NULL;
+    cJSON *channel_list_obj = NULL, *channel_pref_obj = NULL;
+    mac_addr_str_t mac_str;
+    char *json_buff = NULL;
+    size_t json_len = 0;
+    bus_error_t rc;
+
+    param = strrchr(name, '.');
+    if (param == NULL) {
+        em_printfout("Invalid method name");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_invalid_input;
+    }
+    ++param;
+    if (strcmp("ChannelSelectionRequest()", param) != 0) {
+        em_printfout("Invalid method");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_invalid_method;
+    }
+
+    // Lookup controller and get the DM instance for this device/radio path
+    em_ctrl_t *em_ctrl = em_ctrl_t::get_em_ctrl_instance();
+    if (!em_ctrl) {
+        em_printfout("Controller not found");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_general;
+    }
+    dm_easy_mesh_ctrl_t *dm_ctrl = em_ctrl->get_dm_ctrl();
+
+    // Skip the static network prefix and parse the device instance from the TR-181 path
+    name += sizeof(DATAELEMS_NETWORK);
+    name = dm_ctrl->get_table_instance(name, instance, MAX_INSTANCE_LEN, &is_num);
+    dm_easy_mesh_t *dm = dm_ctrl->get_dm_easy_mesh(instance, is_num);
+    if (dm == NULL) {
+        em_printfout("Device not found");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_invalid_namespace;
+    }
+
+    name = dm_ctrl->get_table_instance(name, instance, MAX_INSTANCE_LEN, &is_num);
+    dm_radio_t *radio = dm_ctrl->get_dm_radio(dm, instance, is_num);
+    if (radio == NULL) {
+        em_printfout("Radio not found");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_invalid_namespace;
+    }
+
+    em_device_info_t *di = dm->get_device()->get_device_info();
+    em_radio_info_t *ri = radio->get_radio_info();
+
+    const int MAX_CHANSEL_CLASSES = 32;
+    const int MAX_CHANSEL_CHANNELS = 64;
+    em_cmd_params_t params = {};
+
+    // Data structures used to collect nested Class.N.* channel preference input
+    struct channel_info {
+        bool have_channel;
+        bool have_pref;
+        int channel;
+        int preference;
+    };
+
+    struct class_info {
+        int instance_index;
+        bool have_op_class;
+        int op_class;
+        int max_channel_index;
+        channel_info channels[MAX_CHANSEL_CHANNELS];
+    };
+
+    class_info classes[MAX_CHANSEL_CLASSES];
+    int num_classes = 0;
+
+    // Initialize or reset a class_info slot
+    auto clear_class = [&](class_info &cls) {
+        cls.instance_index = -1;
+        cls.have_op_class = false;
+        cls.op_class = -1;
+        cls.max_channel_index = -1;
+        for (int i = 0; i < MAX_CHANSEL_CHANNELS; i++) {
+            cls.channels[i].have_channel = false;
+            cls.channels[i].have_pref = false;
+            cls.channels[i].channel = -1;
+            cls.channels[i].preference = -1;
+        }
+    };
+
+    // Find an existing class_info by instance index, or allocate a new one
+    auto find_or_create_class_by_instance = [&](int instance_index) -> class_info* {
+        for (int i = 0; i < num_classes; i++) {
+            if (classes[i].instance_index == instance_index) {
+                return &classes[i];
+            }
+        }
+        if (num_classes >= MAX_CHANSEL_CLASSES) {
+            return NULL;
+        }
+        clear_class(classes[num_classes]);
+        classes[num_classes].instance_index = instance_index;
+        classes[num_classes].have_op_class = false;
+        classes[num_classes].max_channel_index = -1;
+        num_classes++;
+        return &classes[num_classes - 1];
+    };
+
+    // Parse incoming TR-181 parameters and populate class/channel structures
+    for (prop = input_params; prop; prop = prop->next_data) {
+        char prop_name[BUS_MAX_NAME_LENGTH];
+        size_t prop_name_len = strnlen(prop->name, sizeof(prop_name) - 1);
+        memcpy(prop_name, prop->name, prop_name_len + 1);
+
+        char *tokens[6] = { NULL };
+        char *saveptr = NULL;
+        int token_count = 0;
+        char *tok = strtok_r(prop_name, ".", &saveptr);
+        while (tok != NULL && token_count < 6) {
+            tokens[token_count++] = tok;
+            tok = strtok_r(NULL, ".", &saveptr);
+        }
+
+        // Only nested Class.N.* properties are valid for ChannelSelectionRequest()
+        if (token_count >= 2 && strcmp(tokens[0], "Class") == 0 && atoi(tokens[1]) >= 0) {
+            int class_index = atoi(tokens[1]);
+            if (class_index < 0) {
+                em_printfout("Invalid class index in '%s'", prop->name);
+                goto invalid;
+            }
+            class_info *cls = find_or_create_class_by_instance(class_index);
+            if (!cls) {
+                em_printfout("Too many classes");
+                goto invalid;
+            }
+
+            if (token_count == 3 && strcmp(tokens[2], "OpClass") == 0) {
+                // Parse Class.N.OpClass
+                if (!tr_181_t::tr181_get_prop_int(prop, &cls->op_class)) {
+                    goto invalid;
+                }
+                cls->have_op_class = true;
+            } else if (token_count == 5 && strcmp(tokens[2], "Channel") == 0) {
+                // Parse Class.N.Channel.M.Channel or Class.N.Channel.M.Preference
+                int channel_idx = atoi(tokens[3]);
+                if (channel_idx < 0 || channel_idx >= MAX_CHANSEL_CHANNELS) {
+                    em_printfout("Invalid channel index in '%s'", prop->name);
+                    goto invalid;
+                }
+                if (strcmp(tokens[4], "Channel") == 0) {
+                    if (!tr_181_t::tr181_get_prop_int(prop, &cls->channels[channel_idx].channel)) {
+                        goto invalid;
+                    }
+                    cls->channels[channel_idx].have_channel = true;
+                    if (channel_idx > cls->max_channel_index) {
+                        cls->max_channel_index = channel_idx;
+                    }
+                } else if (strcmp(tokens[4], "Preference") == 0) {
+                    if (!tr_181_t::tr181_get_prop_int(prop, &cls->channels[channel_idx].preference)) {
+                        goto invalid;
+                    }
+                    cls->channels[channel_idx].have_pref = true;
+                    if (channel_idx > cls->max_channel_index) {
+                        cls->max_channel_index = channel_idx;
+                    }
+                } else {
+                    em_printfout("Invalid parameter: %s", prop->name);
+                    goto invalid;
+                }
+            } else {
+                em_printfout("Invalid parameter: %s", prop->name);
+                goto invalid;
+            }
+        } else {
+            em_printfout("Invalid parameter: %s", prop->name);
+            goto invalid;
+        }
+    }
+
+    // Fail if there were no nested class definitions in the request
+    if (num_classes == 0) {
+        em_printfout("Mandatory parameters missing: expected nested Class.N.* entries");
+        if (output_params) {
+            *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+        }
+        return bus_error_invalid_input;
+    }
+
+    // Build the EM control subdocument and JSON payload for SetAnticipatedChannelPreference
+    subdoc = reinterpret_cast<em_subdoc_info_t *>(buff);
+    memset(subdoc, 0, sizeof(em_subdoc_info_t));
+    strncpy(subdoc->name, "SetAnticipatedChannelPreference", sizeof(subdoc->name) - 1);
+
+    root = cJSON_CreateObject();
+    json = cJSON_CreateObject();
+    if (!root || !json) {
+        em_printfout("Create object failed");
+        goto cleanup;
+    }
+    if (!cJSON_AddItemToObject(root, "wfa-dataelements:SetAnticipatedChannelPreference", json)) {
+        em_printfout("Add item failed");
+        cJSON_Delete(json);
+        goto cleanup;
+    }
+
+    // Create the Network/Device/Radio container structure for the payload
+    net_obj = cJSON_AddObjectToObject(json, "Network");
+    if (!net_obj) {
+        em_printfout("Add Network failed");
+        goto cleanup;
+    }
+    if (!cJSON_AddStringToObject(net_obj, "ID", GLOBAL_NET_ID)) {
+        em_printfout("Add Network ID failed");
+        goto cleanup;
+    }
+
+    dev_list = cJSON_AddArrayToObject(net_obj, "DeviceList");
+    if (!dev_list) {
+        em_printfout("Add DeviceList failed");
+        goto cleanup;
+    }
+
+    dev_obj = cJSON_CreateObject();
+    if (!dev_obj) {
+        em_printfout("Create device object failed");
+        goto cleanup;
+    }
+    if (!cJSON_AddItemToArray(dev_list, dev_obj)) {
+        em_printfout("Add Device failed");
+        cJSON_Delete(dev_obj);
+        goto cleanup;
+    }
+    dm_easy_mesh_t::macbytes_to_string(di->intf.mac, mac_str);
+    if (!cJSON_AddStringToObject(dev_obj, "ID", mac_str)) {
+        em_printfout("Add Device ID failed");
+        goto cleanup;
+    }
+
+    if (!cJSON_AddStringToObject(dev_obj, "FROM", "TR181_SOURCE")) {
+        em_printfout("Add Device FROM failed");
+        goto cleanup;
+    }
+
+    radio_list = cJSON_AddArrayToObject(dev_obj, "RadioList");
+    if (!radio_list) {
+        em_printfout("Add RadioList failed");
+        goto cleanup;
+    }
+
+    radio_obj = cJSON_CreateObject();
+    if (!radio_obj) {
+        em_printfout("Create radio object failed");
+        goto cleanup;
+    }
+    if (!cJSON_AddItemToArray(radio_list, radio_obj)) {
+        em_printfout("Add Radio failed");
+        cJSON_Delete(radio_obj);
+        goto cleanup;
+    }
+    dm_easy_mesh_t::macbytes_to_string(ri->id.ruid, mac_str);
+    if (!cJSON_AddStringToObject(radio_obj, "ID", mac_str)) {
+        em_printfout("Add Radio ID failed");
+        goto cleanup;
+    }
+
+    // Add the radio-level AnticipatedChannelPreference array
+    class_arr = cJSON_AddArrayToObject(radio_obj, "AnticipatedChannelPreference");
+    if (!class_arr) {
+        em_printfout("Add AnticipatedChannelPreference failed");
+        goto cleanup;
+    }
+
+    if (num_classes > 0) {
+        // Convert each parsed class entry into JSON with ChannelList and ChannelPrefList
+        for (int i = 0; i < num_classes; i++) {
+            class_info &cls = classes[i];
+            if (!cls.have_op_class || cls.max_channel_index < 0) {
+                em_printfout("Incomplete class entry");
+                goto invalid;
+            }
+
+            class_obj = cJSON_CreateObject();
+            if (!class_obj) {
+                em_printfout("Create class object failed");
+                goto cleanup;
+            }
+            if (!cJSON_AddItemToArray(class_arr, class_obj)) {
+                em_printfout("Add class object failed");
+                cJSON_Delete(class_obj);
+                goto cleanup;
+            }
+            if (!cJSON_AddNumberToObject(class_obj, "Class", cls.op_class)) {
+                em_printfout("Add Class failed");
+                goto cleanup;
+            }
+
+            channel_list_obj = cJSON_AddArrayToObject(class_obj, "ChannelList");
+            channel_pref_obj = cJSON_AddArrayToObject(class_obj, "ChannelPrefList");
+            if (!channel_list_obj || !channel_pref_obj) {
+                em_printfout("Add ChannelList or ChannelPrefList failed");
+                goto cleanup;
+            }
+
+            for (int idx = 0; idx <= cls.max_channel_index; idx++) {
+                if (!cls.channels[idx].have_channel) {
+                    continue;
+                }
+                if (!cls.channels[idx].have_pref) {
+                    em_printfout("Missing Preference for channel index %d", idx);
+                    goto invalid;
+                }
+                cJSON_AddItemToArray(channel_list_obj, cJSON_CreateNumber(cls.channels[idx].channel));
+                cJSON_AddItemToArray(channel_pref_obj, cJSON_CreateNumber(cls.channels[idx].preference));
+            }
+        }
+    }
+
+    // Serialize the final JSON payload and send it to the EM control bus
+    json_buff = cJSON_PrintUnformatted(root);
+    if (!json_buff) {
+        em_printfout("Print JSON failed");
+        goto cleanup;
+    }
+
+    json_len = strlen(json_buff) + 1;
+    if (json_len > EM_IO_BUFF_SZ) {
+        em_printfout("JSON payload too large");
+        goto cleanup;
+    }
+    memcpy(subdoc->buff, json_buff, json_len);
+
+    em_printfout("Sending ChannelSelectionRequest with JSON payload len %zu:\n", json_len - 1);
+    em_ctrl->io_process(em_bus_event_type_set_channel, subdoc->buff, json_len);
+    free(json_buff);
+    cJSON_Delete(root);
+
+    if (output_params) {
+        *output_params = tr_181_t::tr181_set_status_output_prop("Success");
+    }
+
+    // Request processed successfully
+    return bus_error_success;
+
+invalid:
+    // Handle malformed input or missing nested channel preference fields
+    em_printfout("Invalid parameter or missing preference/channel data");
+    if (output_params) {
+        *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
+    }
+    cJSON_Delete(root);
+    free(json_buff);
+    return bus_error_invalid_input;
+
+cleanup:
+    // Cleanup allocated JSON and buffer memory before exiting on failure
+    cJSON_Delete(root);
+    free(json_buff);
     if (output_params) {
         *output_params = tr_181_t::tr181_set_status_output_prop("Failure");
     }
@@ -2345,10 +2729,92 @@ int dm_easy_mesh_ctrl_t::analyze_set_channel(em_bus_event_t *evt, em_cmd_t *pcmd
 	std::vector<std::string> delete_invalid_opclass_ids;
 
 	subdoc = &evt->u.subdoc;
-
+    em_printfout("Received SetChannel event: \n%s\n", subdoc->buff);
    	if ((ret = dm.decode_config(subdoc, "SetAnticipatedChannelPreference", i, &num_devices)) < 0) {
        	return ret;
    	}
+    if (dm.from_tr181 == true) {
+        em_printfout("Received tr181 SetAnticipatedChannelPreference event");
+        // Lets process radio channel preference report and schedule channel selection request
+        // TODO: Invalidate the opclasses belongs to this device abd radio ???? - done
+        // EM and dm object is needed for the same.
+
+        // print all opclasses and channels received in the event for debugging purpose
+        em_printfout("Number of opclasses received in the event: %d", dm.get_num_op_class());
+        for (i = 0; i < dm.get_num_op_class(); i++) {
+            updated_oclass = &dm.m_op_class[i];
+            dm_easy_mesh_t::macbytes_to_string(updated_oclass->m_op_class_info.id.ruid, mac_str);
+            em_printfout("Radio: %s, OpClass: %d, Type: %d, NumChannels: %d", mac_str, 
+                updated_oclass->m_op_class_info.id.op_class, updated_oclass->m_op_class_info.id.type, updated_oclass->m_op_class_info.num_channels);
+            for (j = 0; j < updated_oclass->m_op_class_info.num_channels; j++) {
+                em_printfout("Channel: %d, Preference: %d", updated_oclass->m_op_class_info.channels[j], updated_oclass->m_op_class_info.channel_pref[j]);
+            }
+        }
+
+        pdm = m_data_model_list.get_first_dm();
+
+        while (pdm != NULL) {
+            if (memcmp(dm.m_device.m_device_info.intf.mac, pdm->get_device_info()->intf.mac, sizeof(mac_address_t)) != 0) {
+                pdm = m_data_model_list.get_next_dm(pdm);
+                continue;
+            }
+            break;
+        }
+
+        if (pdm == NULL) {
+            em_printfout("No matching DM found for device MAC in SetAnticipatedChannelPreference event");
+            return 0;
+        }
+        pdm->print_config();
+        
+        // Assuming that the opclass list received in the event is only for one radio,
+        // invalidating the opclasses for that radio based on RUID match
+        {
+            updated_oclass = &dm.m_op_class[0];
+            for (j = 0; j < pdm->get_num_op_class(); j++) {
+                current_oclass = &pdm->m_op_class[j];
+                if (current_oclass->m_op_class_info.id.type == em_op_class_type_anticipated && 
+                    memcmp(current_oclass->m_op_class_info.id.ruid, updated_oclass->m_op_class_info.id.ruid, sizeof(mac_address_t)) == 0) {
+                    em_printfout("Invalidating opclass %d for radio with RUID: %s as it is received in the event with anticipated type", 
+                        current_oclass->m_op_class_info.id.op_class, util::mac_to_string(current_oclass->m_op_class_info.id.ruid).c_str());
+                    current_oclass->m_op_class_info.pref_valid = EM_CH_PREF_ENTRY_INVALID;
+                    std::string opclass_id = util::mac_to_string(current_oclass->m_op_class_info.id.ruid) + "@" +
+                                            std::to_string(current_oclass->m_op_class_info.id.type) + "@" +
+                                            std::to_string(current_oclass->m_op_class_info.id.op_class);
+                    em_printfout("Marking opclass with id: %s for deletion from DB", opclass_id.c_str());
+                    delete_invalid_opclass_ids.push_back(opclass_id);
+                }
+            }
+        }
+        pdm->print_config();
+        // Invalidated all the OPCLASSES belonging to the particular radio
+
+        // Update data model and db with new opclass info received in the event
+        // Deleting the invalid opclasses from data model list and db as well, so that it will not be considered for channel selection decision making
+        // Delete invalid row of anticipated type from db
+        pdm->set_channels_list(dm.m_op_class, dm.get_num_op_class());
+
+		for (const auto &del_id : delete_invalid_opclass_ids) {
+			em_printfout("Deleting obsolete op-class from DB: %s\n", del_id.c_str());
+			dm_op_class_list_t::delete_row(m_db_client, del_id.c_str());
+		}
+
+        //pdm->set_channels_list(dm.m_op_class, dm.get_num_op_class());
+        pdm->set_db_cfg_param(db_cfg_type_op_class_list_update, "");
+        em_printfout("Updated data model with new opclass info received in the event");
+        pdm->print_config();
+
+        // Queue the channel selection command to trigger the channel selection
+        pcmd[num] = new em_cmd_set_channel_t(evt->params, dm);
+        tmp = pcmd[num];
+        num++;
+        while ((pcmd[num] = tmp->clone_for_next()) != NULL) {
+            tmp = pcmd[num];
+            num++;
+        }
+    	em_printfout("Done SetChannel event: %d\n", num);
+        return static_cast<int> (num);
+    }
 
 	assert(dm.get_num_op_class() == EM_MAX_BANDS);
 
@@ -3111,7 +3577,7 @@ int dm_easy_mesh_ctrl_t::get_channel_config(cJSON *parent, char *key, em_get_cha
             if (reason == em_get_channel_list_reason_set_anticipated) {
                 channel_list_obj = cJSON_AddArrayToObject(radio_obj, "AnticipatedChannelPreference");
                 snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_anticipated, 0);
-                dm_op_class_list_t::get_config(op_class_list_obj, op_key);
+                dm_op_class_list_t::get_config(channel_list_obj, op_key);
             }
             op_class_list_obj = cJSON_AddArrayToObject(radio_obj, "CurrentOperatingClasses");
             snprintf(op_key, sizeof(op_key), "%s@%d@%d", tmp, em_op_class_type_current, 0);
@@ -3271,7 +3737,7 @@ void dm_easy_mesh_ctrl_t::get_config(em_long_string_t net_id, em_subdoc_info_t *
 
     parent = cJSON_CreateObject();
 
-    //printf("%s:%d: Subdoc Name: %s\n", __func__, __LINE__, subdoc->name);
+    printf("%s:%d: get_config.  Subdoc Name: %s\n", __func__, __LINE__, subdoc->name);
     if (strncmp(subdoc->name, "Network", strlen(subdoc->name)) == 0) {
         get_network_config(parent, net_id);
     } else if (strncmp(subdoc->name, "DeviceList", strlen(subdoc->name)) == 0) {
