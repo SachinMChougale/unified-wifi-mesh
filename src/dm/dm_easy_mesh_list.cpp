@@ -1063,8 +1063,13 @@ dm_op_class_t *dm_easy_mesh_list_t::get_first_pre_set_op_class_by_type(em_op_cla
 
 	for (i = 0; i < dm->get_num_op_class(); i++) {
 		op_class = &dm->m_op_class[i];
-		if (op_class->m_op_class_info.id.type == type) {
-			return op_class;
+        // Make sure Network level configuration should not include the radio level anticipated opclasses
+		if (op_class->m_op_class_info.id.type == type ) {
+                if (type != em_op_class_type_anticipated ||
+                    memcmp(op_class->m_op_class_info.id.ruid, dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t)) == 0) {
+                    em_printfout("%s:%d: Found match for type:%d on device mac:%s\n", __func__, __LINE__, type, util::mac_to_string(dm->m_device.m_device_info.intf.mac).c_str());
+                    return op_class;
+                }
 		}
 	}	
 
@@ -1087,7 +1092,11 @@ dm_op_class_t *dm_easy_mesh_list_t::get_next_pre_set_op_class_by_type(em_op_clas
 		pop_class = &dm->m_op_class[i];
 
 		if ((return_next == true) && (pop_class->m_op_class_info.id.type == type)) {
+            if (type != em_op_class_type_anticipated ||
+                memcmp(pop_class->m_op_class_info.id.ruid, dm->m_device.m_device_info.intf.mac, sizeof(mac_address_t)) == 0) {
+                em_printfout("%s:%d: Found next match for type:%d on device mac:%s\n", __func__, __LINE__, type, util::mac_to_string(dm->m_device.m_device_info.intf.mac).c_str());
 			return pop_class;
+            }
 		}
 
 		if ((pop_class->m_op_class_info.id.type == type) &&

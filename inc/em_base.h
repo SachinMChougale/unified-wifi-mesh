@@ -2408,6 +2408,7 @@ typedef enum {
     em_op_class_type_preference,
     em_op_class_type_anticipated,
     em_op_class_type_scan_param,
+    em_op_class_type_selection,
 } em_op_class_type_t;
 
 typedef struct {
@@ -2879,6 +2880,7 @@ typedef enum {
     em_bus_event_type_get_ssid,
     em_bus_event_type_set_ssid,
     em_bus_event_type_get_channel,
+    em_bus_event_type_channel_select,
     em_bus_event_type_set_channel,
     em_bus_event_type_scan_channel,
     em_bus_event_type_scan_result,
