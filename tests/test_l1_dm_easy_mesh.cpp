@@ -20,13 +20,287 @@
 #include <gmock/gmock.h>
 #include <stdio.h>
 #include <cstring>
+#include <cstdlib>
 #include <net/if.h>
 #include "em_cmd.h"
+#include "em_ctrl.h"
 #include "dm_easy_mesh.h"
 #include <iomanip>
 
 extern "C" const char* __asan_default_options() {
     return "detect_leaks=0";
+}
+
+class em_ctrl_channelselect_test : public ::testing::Test {
+protected:
+    em_ctrl_t *ctrl;
+    static bool s_singleton_initialized;
+
+    void SetUp() override {
+        ctrl = em_ctrl_t::get_em_ctrl_instance();
+        ASSERT_NE(ctrl, nullptr);
+
+        if (!s_singleton_initialized) {
+            const char* data_model_path = "/tmp/test_config.db";
+            if (!ctrl->is_data_model_initialized()) {
+                ASSERT_EQ(ctrl->init(data_model_path), 0);
+            }
+            // em_mgr_t::init() already calls orch_init(); only create an orchestrator if one doesn't exist.
+            if (ctrl->get_orch() == nullptr) {
+                ASSERT_EQ(ctrl->orch_init(), 0);
+            }
+            s_singleton_initialized = true;
+        }
+    }
+
+    static void append_prop(bus_data_prop_t **head, const char *name, int value) {
+        bus_data_prop_t *prop = static_cast<bus_data_prop_t *>(calloc(1, sizeof(*prop)));
+        if (!prop) {
+            ADD_FAILURE() << "calloc failed in append_prop";
+            return;
+        }
+        strncpy(prop->name, name, sizeof(prop->name) - 1);
+        prop->name[sizeof(prop->name) - 1] = '\0';
+        prop->value.data_type = bus_data_type_int32;
+        prop->value.raw_data.i32 = value;
+        prop->next_data = nullptr;
+
+        if (*head == nullptr) {
+            *head = prop;
+            return;
+        }
+
+        bus_data_prop_t *tail = *head;
+        while (tail->next_data != nullptr) {
+            tail = tail->next_data;
+        }
+        tail->next_data = prop;
+    }
+};
+
+bool em_ctrl_channelselect_test::s_singleton_initialized = false;
+
+static void free_prop_list(bus_data_prop_t *head) {
+    while (head) {
+        bus_data_prop_t *next = head->next_data;
+        if (head->value.data_type == bus_data_type_string && head->value.raw_data.bytes) {
+            free(head->value.raw_data.bytes);
+        }
+        free(head);
+        head = next;
+    }
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_accepts_1_based_indices_and_valid_payload) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x06};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network1", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.1.OpClass", 81);
+    append_prop(&input, "Class.1.Channel.1.Channel", 1);
+    append_prop(&input, "Class.1.Channel.1.Preference", 1);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_success);
+    EXPECT_NE(output, nullptr);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_accepts_high_class_instance_identifier) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x0a};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network2", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.100.OpClass", 81);
+    append_prop(&input, "Class.100.Channel.1.Channel", 1);
+    append_prop(&input, "Class.100.Channel.1.Preference", 1);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_success);
+    EXPECT_NE(output, nullptr);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_rejects_class_index_overflow) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x0c};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("NetworkOverflow", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.2147483648.OpClass", 81);
+    append_prop(&input, "Class.2147483648.Channel.1.Channel", 1);
+    append_prop(&input, "Class.2147483648.Channel.1.Preference", 1);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_invalid_input);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_rejects_invalid_opclass) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x07};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network2", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.1.OpClass", 999);
+    append_prop(&input, "Class.1.Channel.1.Channel", 1);
+    append_prop(&input, "Class.1.Channel.1.Preference", 1);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_invalid_input);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_rejects_channel_not_in_opclass) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x08};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network3", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.1.OpClass", 81);
+    append_prop(&input, "Class.1.Channel.1.Channel", 14);
+    append_prop(&input, "Class.1.Channel.1.Preference", 1);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_invalid_input);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_rejects_preference_value_15) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x09};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network4", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.1.OpClass", 81);
+    append_prop(&input, "Class.1.Channel.1.Channel", 1);
+    append_prop(&input, "Class.1.Channel.1.Preference", 15);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_invalid_input);
+    free_prop_list(input);
+    free_prop_list(output);
+}
+
+TEST_F(em_ctrl_channelselect_test, cmd_channelselect_rejects_out_of_range_preference) {
+    em_interface_t intf{};
+    unsigned char mac[6] = {0x11, 0x22, 0x33, 0x04, 0x05, 0x0b};
+    strncpy(intf.name, "eth0", sizeof(intf.name) - 1);
+    intf.name[sizeof(intf.name) - 1] = '\0';
+    memcpy(intf.mac, mac, sizeof(intf.mac));
+
+    dm_easy_mesh_t* dm = ctrl->create_data_model("Network4", &intf, em_profile_type_1);
+    ASSERT_NE(dm, nullptr);
+
+    em_radio_info_t radio_info = {};
+    radio_info.band = em_freq_band_24;
+    dm->m_radio[0] = dm_radio_t(&radio_info);
+    dm->m_num_radios = 1;
+
+    bus_data_prop_t *input = nullptr;
+    append_prop(&input, "Class.1.OpClass", 81);
+    append_prop(&input, "Class.1.Channel.1.Channel", 1);
+    append_prop(&input, "Class.1.Channel.1.Preference", 1000);
+
+    bus_data_prop_t *output = nullptr;
+    char dev_mac[18] = {0}, method[128] = {0};
+    dm_easy_mesh_t::macbytes_to_string(intf.mac, dev_mac);
+    snprintf(method, sizeof(method), "Device.WiFi.DataElements.Network.Device.[%s].Radio.1.ChannelSelectionRequest()", dev_mac);
+    bus_error_t rc = em_ctrl_t::cmd_channelselect(method, input, &output, nullptr);
+    EXPECT_EQ(rc, bus_error_invalid_input);
+    free_prop_list(input);
+    free_prop_list(output);
 }
 
 // Helper: Print hash map contents
