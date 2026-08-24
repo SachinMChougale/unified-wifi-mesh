@@ -19,43 +19,38 @@
 #ifndef DB_CLIENT_H
 #define DB_CLIENT_H
 
-#if defined(OPENWRT_BUILD) || defined(RDKB_BUILD)
-// MariaDB C client header for cross-compiled builds (OpenWRT / RDKB), where headers are under <mysql/>
-#include <mysql/mysql.h>
-#else
-// MariaDB C client header for a standard Linux install (Debian)
-#include <mariadb/mysql.h>
-#endif
+#include <sqlite3.h>
+#include <mutex>
 
  /**!
   * @brief Database client class to manage database connections and queries.
   *
   * This class provides methods for initializing, executing queries,
-  * and retrieving results from a database using the MariaDB C client library.
+	* and retrieving results from a SQLite database.
   *
-  * @note This class is not thread-safe.
+	* @note Access to a client must be serialized by its owner when shared between threads.
   */
  class db_client_t {
-	MYSQL *m_con;    ///< MariaDB connection instance
+	sqlite3 *m_con;
+	char m_path[512];
+	std::mutex m_mutex;
 
 
 	 /**!
 	  * @brief Establish a connection to the database.
 	  *
 	  * This function attempts to establish a connection to the specified database
-	  * using the provided path. It is essential to call this function before
+	  * using the provided database file path. It is essential to call this function before
 	  * executing any database queries to ensure a valid connection is established.
 	  *
-	  * @param[in] path A constant character pointer representing the path to the
-	  * database in the format "username@password".
+	  * @param[in] path A constant character pointer representing the SQLite database file.
 	  *
 	  * @returns An integer indicating the success or failure of the connection
 	  * attempt.
 	  * @retval 0 Connection successful.
 	  * @retval -1 Connection failed due to invalid path or other errors.
 	  *
-	  * @note Ensure that the database server is running and accessible before
-	  * calling this function. Failure to do so may result in a connection error.
+	  * @note The database file is created automatically when it does not exist.
 	  */
 	 int connect(const char *path);
 
@@ -68,7 +63,7 @@
 	  * specified by the given path. It must be called before any other database
 	  * operations are performed.
 	  *
-	  * @param[in] path Path to the database in the format "username@password".
+	  * @param[in] path Path to the SQLite database file. When null or empty, the default deployment path is used.
 	  *
 	  * @returns 0 on success, non-zero on failure.
 	  * @retval 0 Initialization successful.
@@ -110,6 +105,9 @@
 	  */
 	 bool next_result(void *ctx);
 
+	 /** Release a result context that is no longer being iterated. */
+	 void free_result(void *ctx);
+
 
 	 /**!
 	  * @brief Retrieve a string value from the result context.
@@ -150,6 +148,10 @@
 	  * @note Use with caution as this will erase all existing data.
 	  */
 	 int recreate_db();
+
+	 int begin_transaction();
+	 int commit();
+	 int rollback();
 
 
 	 /**!
