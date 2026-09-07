@@ -16,17 +16,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
- #include <string.h>
- #include <stdlib.h>
- #include <assert.h>
+#include <string.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <vector>
  #include "db_client.h"
  #include "em_base.h"
 
- // Structure to hold the result set and associated data
- struct result_context_t {
-     MYSQL_RES *result;
-     MYSQL_ROW row;
- };
+struct result_context_t {
+    sqlite3_stmt *statement;
+    bool stepped;
+};
+
+static const char *default_database_path = "/var/lib/unified-wifi-mesh/unified_wifi_mesh.db";
 
  int db_client_t::recreate_db()
  {
@@ -35,19 +40,42 @@
          return -1;
      }
 
-     // Drop existing database
-     if (mysql_query(m_con, "DROP DATABASE IF EXISTS OneWifiMesh")) {
-         printf("%s:%d: Error dropping database: %s\n", __func__, __LINE__, mysql_error(m_con));
+    std::lock_guard<std::mutex> lock(m_mutex);
+     sqlite3_stmt *statement = NULL;
+     if (sqlite3_prepare_v2(m_con, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'", -1, &statement, NULL) != SQLITE_OK) {
+         printf("%s:%d: Error listing tables: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
          return -1;
      }
-
-     // Create new database
-     if (mysql_query(m_con, "CREATE DATABASE OneWifiMesh")) {
-         printf("%s:%d: Error creating database: %s\n", __func__, __LINE__, mysql_error(m_con));
-         return -1;
+     std::vector<std::string> table_names;
+     while (sqlite3_step(statement) == SQLITE_ROW) {
+         const char *name = reinterpret_cast<const char *>(sqlite3_column_text(statement, 0));
+         table_names.emplace_back(name != NULL ? name : "");
      }
-
+     sqlite3_finalize(statement);
+     for (const std::string &name : table_names) {
+         char query[1024];
+         snprintf(query, sizeof(query), "DROP TABLE IF EXISTS \"%s\"", name.c_str());
+         if (sqlite3_exec(m_con, query, NULL, NULL, NULL) != SQLITE_OK) {
+             printf("%s:%d: Error dropping table: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
+             return -1;
+         }
+     }
      return 0;
+ }
+
+ int db_client_t::begin_transaction()
+ {
+     return execute("BEGIN IMMEDIATE TRANSACTION") == NULL && sqlite3_get_autocommit(m_con) == 0 ? 0 : -1;
+ }
+
+ int db_client_t::commit()
+ {
+     return execute("COMMIT") == NULL && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
+ }
+
+ int db_client_t::rollback()
+ {
+     return execute("ROLLBACK") == NULL && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
  }
 
  void *db_client_t::execute(const char *query)
@@ -57,27 +85,27 @@
          return NULL;
      }
 
-     if (mysql_query(m_con, query)) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+     sqlite3_stmt *statement = NULL;
+     int rc = sqlite3_prepare_v2(m_con, query, -1, &statement, NULL);
+     if (rc != SQLITE_OK) {
          printf("%s:%d: Query failed: %s\n", __func__, __LINE__, query);
-         printf("%s:%d: Error: %s\n", __func__, __LINE__, mysql_error(m_con));
+         printf("%s:%d: Error: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
          return NULL;
      }
-
-     MYSQL_RES *result = mysql_store_result(m_con);
-     if (!result) {
-         // This might not be an error - could be a query that doesn't return results (INSERT, UPDATE, etc.)
-         if (mysql_field_count(m_con) == 0) {
-             return NULL;  // Query was successful but didn't return data
-         } else {
-             printf("%s:%d: Error storing result: %s\n", __func__, __LINE__, mysql_error(m_con));
-             return NULL;
-         }
+    rc = sqlite3_step(statement);
+     if (rc == SQLITE_DONE) {
+         sqlite3_finalize(statement);
+         return NULL;
      }
-
-     // Create a context structure to hold the result and current row
+     if (rc != SQLITE_ROW) {
+         printf("%s:%d: Error: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
+         sqlite3_finalize(statement);
+         return NULL;
+     }
      result_context_t *ctx = new result_context_t;
-     ctx->result = result;
-     ctx->row = NULL;
+     ctx->statement = statement;
+    ctx->stepped = false;
 
      return ctx;
  }
@@ -89,16 +117,27 @@
      }
 
      result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
-     res_ctx->row = mysql_fetch_row(res_ctx->result);
-
-     if (res_ctx->row == NULL) {
-         // No more rows - clean up
-         mysql_free_result(res_ctx->result);
+    std::lock_guard<std::mutex> lock(m_mutex);
+     int rc = res_ctx->stepped ? sqlite3_step(res_ctx->statement) : SQLITE_ROW;
+     res_ctx->stepped = true;
+     if (rc != SQLITE_ROW) {
+         sqlite3_finalize(res_ctx->statement);
          delete res_ctx;
          return false;
      }
 
      return true;
+ }
+
+ void db_client_t::free_result(void *ctx)
+ {
+     if (ctx == NULL) {
+         return;
+     }
+     std::lock_guard<std::mutex> lock(m_mutex);
+     result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
+     sqlite3_finalize(res_ctx->statement);
+     delete res_ctx;
  }
 
  char *db_client_t::get_string(void *ctx, char *str, unsigned int col)
@@ -109,17 +148,14 @@
 
      result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
 
-     if (res_ctx->row == NULL || res_ctx->row[col - 1] == NULL) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+     assert(col > 0);
+     const unsigned char *value = sqlite3_column_text(res_ctx->statement, static_cast<int>(col - 1));
+     if (value == NULL) {
          return NULL;
      }
-
-     // Note: Column indices in MariaDB C API are 0-based
-     unsigned long *lengths = mysql_fetch_lengths(res_ctx->result);
-     if (!lengths) {
-         return NULL;
-     }
-
-     snprintf(str, lengths[col - 1] + 1, "%s", res_ctx->row[col - 1]);
+     snprintf(str, static_cast<size_t>(sqlite3_column_bytes(res_ctx->statement, static_cast<int>(col - 1))) + 1, "%s", value);
      return str;
  }
 
@@ -129,76 +165,34 @@
 
      result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
 
-     if (res_ctx->row == NULL || res_ctx->row[col - 1] == NULL) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+     if (col == 0 || sqlite3_column_type(res_ctx->statement, static_cast<int>(col - 1)) == SQLITE_NULL) {
          return 0;
      }
-
-     // Note: Column indices in MariaDB C API are 0-based
-     return atoi(res_ctx->row[col - 1]);
+     return sqlite3_column_int(res_ctx->statement, static_cast<int>(col - 1));
  }
 
  int db_client_t::connect(const char *path)
  {
-     if (path == NULL || strlen(path) <= 0) {
-         return -1;
+     const char *database_path = (path != NULL && path[0] != '\0') ? path : default_database_path;
+     snprintf(m_path, sizeof(m_path), "%s", database_path);
+     std::filesystem::path file_path(database_path);
+     std::error_code error;
+     if (file_path.has_parent_path()) {
+         std::filesystem::create_directories(file_path.parent_path(), error);
+         if (error) {
+             printf("%s:%d: Error creating database directory: %s\n", __func__, __LINE__, error.message().c_str());
+             return -1;
+         }
      }
-
-     // Parse the path format: "username@password"
-     char *tmp = strchr(const_cast<char *>(path), '@');
-     if (tmp == NULL) {
-         printf("%s:%d: invalid path: %s\n", __func__, __LINE__, path);
-         return -1;
-     }
-
-     // Split username and password
-     char username[256];
-     char password[256];
-
-     size_t user_len = static_cast<size_t>(tmp - path);
-     if (user_len >= sizeof(username)) {
-         printf("%s:%d: username too long\n", __func__, __LINE__);
-         return -1;
-     }
-
-     strncpy(username, path, user_len);
-     username[user_len] = '\0';
-
-     tmp++; // Move past '@'
-     strncpy(password, tmp, sizeof(password) - 1);
-     password[sizeof(password) - 1] = '\0';
-
-     printf("%s:%d: user:%s pass:%s\n", __func__, __LINE__, username, password);
-
-     // Initialize MySQL connection
-     m_con = mysql_init(NULL);
-     if (m_con == NULL) {
-         printf("%s:%d: mysql_init() failed\n", __func__, __LINE__);
-         return -1;
-     }
-
-     // Connect to the database
-     if (mysql_real_connect(m_con,
-                           "localhost",
-                           username,
-                           password,
-                           NULL,        // Don't select database yet
-                           3306,       // Default port
-                           NULL,       // Unix socket
-                           0) == NULL) {
-         printf("%s:%d: mysql_real_connect() failed: %s\n", __func__, __LINE__,
-                mysql_error(m_con));
-         mysql_close(m_con);
+     if (sqlite3_open(database_path, &m_con) != SQLITE_OK) {
+         printf("%s:%d: sqlite3_open() failed: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
+         sqlite3_close(m_con);
          m_con = NULL;
          return -1;
      }
-
-     // Select the database
-     if (mysql_select_db(m_con, "OneWifiMesh") != 0) {
-         printf("%s:%d: Error selecting database: %s\n", __func__, __LINE__,
-                mysql_error(m_con));
-         // Don't fail here - the database might not exist yet
-     }
-
+     sqlite3_busy_timeout(m_con, 5000);
      return 0;
  }
 
@@ -220,7 +214,7 @@
  db_client_t::~db_client_t()
  {
      if (m_con) {
-         mysql_close(m_con);
+         sqlite3_close(m_con);
          m_con = NULL;
      }
  }

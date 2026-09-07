@@ -27,7 +27,7 @@ protected:
     db_client_t* dbClient;
     void SetUp() override {
         dbClient = new db_client_t();
-        dbClient->init("bpi@root");
+        dbClient->init("/tmp/unified-wifi-mesh-client-test.db");
     }
     void TearDown() override {
         delete dbClient;
@@ -37,17 +37,13 @@ protected:
 class db_client_crud_Test : public ::testing::Test {
 protected:
     db_client_t* dbClient;
-    struct result_context_t {
-        MYSQL_RES *result;
-        MYSQL_ROW row;
-    };
     void SetUp() override {
         dbClient = new db_client_t();
-        dbClient->init("bpi@root");
+        dbClient->init("/tmp/unified-wifi-mesh-test.db");
         // Step 1: Create table
         free_result(dbClient->execute(
             "CREATE TABLE IF NOT EXISTS users ("
-            "id INT AUTO_INCREMENT PRIMARY KEY,"
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "username VARCHAR(50) NOT NULL,"
             "email VARCHAR(100),"
             "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
@@ -67,11 +63,7 @@ protected:
     }
     // Helper to free memory
     void free_result(void* result) {
-        if (result) {
-            result_context_t* ctx = static_cast<result_context_t*>(result);
-            if (ctx->result) mysql_free_result(ctx->result);
-            delete ctx;
-        }
+        dbClient->free_result(result);
     }
 };
 
@@ -208,7 +200,7 @@ TEST_F(db_client_t_Test, ExecuteInvalidSQLSyntax) {
  * | Variation / Step | Description | Test Data | Expected Result | Notes |
  * | :----: | --------- | ---------- |-------------- | ----- |
  * | 01 | Execute a SELECT query to retrieve the first user's ID | query = "SELECT id FROM users ORDER BY id ASC LIMIT 1;" | Result context is not null | Should Pass |
- * | 02 | Fetch the first row from the result | ctx->row = mysql_fetch_row(ctx->result) | Row is not null | Should Pass |
+ * | 02 | Fetch the first row from the result | dbClient->next_result(result) | Row is not null | Should Pass |
  * | 03 | Call `get_number` with the valid context and column index 1 | ctx, column_index = 1 | Returns integer value `1` | Expected ID of first row |
  * | 04 | Verify the returned value matches expected | id == 1 | Assertion passes | Should Pass |
  */
@@ -219,9 +211,7 @@ TEST_F(db_client_crud_Test, GetNumberValidColumn) {
     void* result = dbClient->execute("SELECT id FROM users ORDER BY id ASC LIMIT 1;");
     ASSERT_NE(result, nullptr);
     // Step 2: Fetch first row
-    result_context_t* ctx = static_cast<result_context_t*>(result);
-    ctx->row = mysql_fetch_row(ctx->result);
-    ASSERT_NE(ctx->row, nullptr);
+    ASSERT_TRUE(dbClient->next_result(result));
     // Step 3: Retrieve number from valid column
     int id = dbClient->get_number(ctx, 1);
     EXPECT_EQ(id, 1);
@@ -275,7 +265,7 @@ TEST_F(db_client_t_Test, RetrieveIntegerFromInvalidContext) {
  * | Variation / Step | Description | Test Data | Expected Result | Notes |
  * | :----: | --------- | ---------- |-------------- | ----- |
  * | 01 | Execute a SELECT query to retrieve the first user's ID and username | query = "SELECT id, username FROM users ORDER BY id ASC LIMIT 1;" | Result context is not null | Should Pass |
- * | 02 | Fetch the first row from the result | ctx->row = mysql_fetch_row(ctx->result) | Row is not null | Should Pass |
+ * | 02 | Fetch the first row from the result | dbClient->next_result(result) | Row is not null | Should Pass |
  * | 03 | Call `get_number` on the second column (non-numeric) | ctx, column_index = 2 | Returns 0 | Non-numeric column handled correctly |
  * | 04 | Verify that the returned value is 0 | value == 0 | Assertion passes | Should Pass |
  */
@@ -285,9 +275,7 @@ TEST_F(db_client_crud_Test, GetNumberNonNumericColumn) {
     void* result = dbClient->execute("SELECT id, username FROM users ORDER BY id ASC LIMIT 1;");
     ASSERT_NE(result, nullptr);
     // Step 2: Fetch first row
-    result_context_t* ctx = static_cast<result_context_t*>(result);
-    ctx->row = mysql_fetch_row(ctx->result);
-    ASSERT_NE(ctx->row, nullptr);
+    ASSERT_TRUE(dbClient->next_result(result));
     // Step 3: Attempt to retrieve number from non-numeric column
     int value = dbClient->get_number(ctx, 2);
     EXPECT_EQ(value, 0);
@@ -350,7 +338,7 @@ TEST_F(db_client_crud_Test, GetNumberInvalidColumn) {
  * | Variation / Step | Description | Test Data | Expected Result | Notes |
  * | :----: | --------- | ---------- |-------------- | ----- |
  * | 01 | Execute a SELECT query to retrieve the first user's username | query = "SELECT username FROM users ORDER BY id ASC LIMIT 1;" | Result context is not null | Should Pass |
- * | 02 | Fetch the first row from the result | ctx->row = mysql_fetch_row(ctx->result) | Row is not null | Should Pass |
+ * | 02 | Fetch the first row from the result | dbClient->next_result(result) | Row is not null | Should Pass |
  * | 03 | Call `get_string` with valid context and column index 1 | ctx, column_index = 1, buffer[256] | Returns pointer to non-empty string | String successfully retrieved |
  * | 04 | Verify that the returned string is not empty | strlen(str) > 0 | Assertion passes | Should Pass |
  */
@@ -360,9 +348,7 @@ TEST_F(db_client_crud_Test, GetStringValidColumn) {
     void* result = dbClient->execute("SELECT username FROM users ORDER BY id ASC LIMIT 1;");
     ASSERT_NE(result, nullptr);
     // Step 2: Fetch first row
-    result_context_t* ctx = static_cast<result_context_t*>(result);
-    ctx->row = mysql_fetch_row(ctx->result);
-    ASSERT_NE(ctx->row, nullptr) << "First row is null — query returned no data";
+    ASSERT_TRUE(dbClient->next_result(result)) << "First row is null — query returned no data";
     // Step 3: Retrieve string from valid column
     char buffer[256] = {0};
     char* str = dbClient->get_string(result, buffer, 1);
@@ -394,7 +380,7 @@ TEST_F(db_client_crud_Test, GetStringValidColumn) {
  * | Variation / Step | Description | Test Data | Expected Result | Notes |
  * | :----: | --------- | ---------- |-------------- | ----- |
  * | 01 | Execute a SELECT query to retrieve the first user's username | query = "SELECT username FROM users ORDER BY id ASC LIMIT 1;" | Result context is not null | Should Pass |
- * | 02 | Fetch the first row from the result | ctx->row = mysql_fetch_row(ctx->result) | Row is not null | Should Pass |
+ * | 02 | Fetch the first row from the result | dbClient->next_result(result) | Row is not null | Should Pass |
  * | 03 | Call `get_string` with invalid column index (0) | ctx, buffer[256], column_index = 0 | Program terminates / assertion triggers | Handled by EXPECT_DEATH |
  * | 04 | Verify that the invalid access is detected | — | Assertion triggers; test passes | Checked using EXPECT_DEATH |
  */
@@ -404,9 +390,7 @@ TEST_F(db_client_crud_Test, GetStringInvalidColumn) {
     void* result = dbClient->execute("SELECT username FROM users ORDER BY id ASC LIMIT 1;");
     ASSERT_NE(result, nullptr) << "execute() returned null — query failed or DB not initialized";
     // Step 2: Fetch first row
-    result_context_t* ctx = static_cast<result_context_t*>(result);
-    ctx->row = mysql_fetch_row(ctx->result);
-    ASSERT_NE(ctx->row, nullptr);
+    ASSERT_TRUE(dbClient->next_result(result));
     char buffer[256] = {0};
     // Step 3: Attempt to retrieve string from invalid column index
     EXPECT_DEATH({
@@ -465,7 +449,7 @@ TEST_F(db_client_t_Test, RetrieveStringWithNullResultAndNullContext) {
 TEST(db_client_tTest, ConnectWithValidDatabasePath) {
     std::cout << "Entering ConnectWithValidDatabasePath test" << std::endl;
     db_client_t* dbClient = new db_client_t();
-    int result = dbClient->init("bpi@root");
+    int result = dbClient->init("/tmp/unified-wifi-mesh-valid.db");
     EXPECT_EQ(result, 0);
     delete dbClient;
     std::cout << "Exiting ConnectWithValidDatabasePath test" << std::endl;
@@ -494,7 +478,7 @@ TEST(db_client_tTest, ConnectWithEmptyPath) {
     std::cout << "Entering ConnectWithEmptyPath test" << std::endl;
     db_client_t* dbClient = new db_client_t();
     int result = dbClient->init("");
-    EXPECT_EQ(result, -1);
+    EXPECT_EQ(result, 0);
     delete dbClient;
     std::cout << "Exiting ConnectWithEmptyPath test" << std::endl;
 }
@@ -522,7 +506,7 @@ TEST(db_client_tTest, ConnectWithPathContainingSpecialCharacters) {
     std::cout << "Entering ConnectWithPathContainingSpecialCharacters test" << std::endl;
     db_client_t* dbClient = new db_client_t();
     int result = dbClient->init("bpi@root@#$.db");
-    EXPECT_EQ(result, -1);
+    EXPECT_EQ(result, 0);
     delete dbClient;
     std::cout << "Exiting ConnectWithPathContainingSpecialCharacters test" << std::endl;
 }
