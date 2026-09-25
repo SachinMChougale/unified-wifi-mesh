@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <signal.h>
 #include "db_easy_mesh.h"
+#include "query_result.h"
 
 char *db_easy_mesh_t::get_column_format(db_fmt_t fmt, unsigned int pos)
 {
@@ -56,27 +57,26 @@ char *db_easy_mesh_t::get_column_format(db_fmt_t fmt, unsigned int pos)
 bool db_easy_mesh_t::is_table_empty(db_client_t& db_client)
 {
     db_query_t query;
-    void *ctx;
-    bool ret = false;
 
     snprintf(query, sizeof(db_query_t), "select * from %s", m_table_name);
 
-    ctx = db_client.execute(query);
+    QueryResult result = db_client.execute(query);
 
-    if (ctx == NULL) {
-        // A failed check requires the same initialization recovery as an empty table.
-        printf("%s:%d: Error: Select query failed for table %s; requesting database initialization\n",
-               __func__, __LINE__, m_table_name);
+    if (!result.valid()) {
+        printf("%s:%d: Error: Select query failed for table %s (SQLite error %d); requesting database initialization\n",
+               __func__, __LINE__, m_table_name, result.status());
         return true;
     }
 
-    if (db_client.next_result(ctx) == false) {
-        ret = true;
-    } else {
-        db_client.free_result(ctx);
+    if (result.next()) {
+        return false;
     }
 
-    return ret;
+    if (result.has_error()) {
+        printf("%s:%d: Error: Reading table %s failed (SQLite error %d); requesting database initialization\n",
+               __func__, __LINE__, m_table_name, result.status());
+    }
+    return true;
 }
 
 int db_easy_mesh_t::get_strings_by_token(char *parent, int token, unsigned int argc, char *argv[])
@@ -120,7 +120,6 @@ int db_easy_mesh_t::insert_row(db_client_t& db_client, ...)
     va_list list;
     db_query_t format, query;
     db_fmt_t	col_fmt;
-    void *ctx;
 
     snprintf(format, sizeof(db_query_t), "insert into %s (", m_table_name);
     for (i = 0; i < m_num_cols; i++) {
@@ -145,9 +144,7 @@ int db_easy_mesh_t::insert_row(db_client_t& db_client, ...)
 
     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
 
-    ctx = db_client.execute(query);
-    db_client.free_result(ctx);
-
+    db_client.execute(query);
     return 0;
 }
 
@@ -157,7 +154,6 @@ int db_easy_mesh_t::update_row(db_client_t& db_client, ...)
     db_query_t	tmp, format, query;
     va_list list;
     db_fmt_t	col_fmt;
-    void *ctx;
 
     snprintf(format, sizeof(db_query_t), "update %s set ", m_table_name);
 
@@ -181,9 +177,7 @@ int db_easy_mesh_t::update_row(db_client_t& db_client, ...)
 
     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
 
-    ctx = db_client.execute(query);
-    db_client.free_result(ctx);
-
+    db_client.execute(query);
     return 0;
 }
 
@@ -193,7 +187,6 @@ int db_easy_mesh_t::compare_row(db_client_t& db_client, ...)
     va_list list;
     db_query_t tmp, format, query;
     db_fmt_t col_fmt;
-    void *ctx;
 
     snprintf(format, sizeof(db_query_t), "select * from %s where ", m_table_name);
 
@@ -212,10 +205,10 @@ int db_easy_mesh_t::compare_row(db_client_t& db_client, ...)
     (void) vsnprintf(query, sizeof(db_query_t), format, list);
     va_end(list);
 
-    ctx = db_client.execute(query);
+    QueryResult result = db_client.execute(query);
     bool comparison_success = false;
 
-    while (db_client.next_result(ctx) == true) {
+    while (result.next()) {
         // Process each row to compare
         comparison_success = true;
     }
@@ -228,7 +221,6 @@ int db_easy_mesh_t::delete_row(db_client_t& db_client, ...)
     db_query_t	tmp, format, query;
     va_list list;
     db_fmt_t	col_fmt;
-    void *ctx;
 
     snprintf(format, sizeof(db_query_t), "delete from %s", m_table_name);
     snprintf(tmp, sizeof(db_query_t), " where %s =  ", m_columns[0].m_name);
@@ -243,8 +235,7 @@ int db_easy_mesh_t::delete_row(db_client_t& db_client, ...)
 
     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
 
-    ctx = db_client.execute(query);
-    db_client.free_result(ctx);
+        db_client.execute(query);
 
     return 0;
 }
@@ -253,28 +244,24 @@ int db_easy_mesh_t::delete_row(db_client_t& db_client, ...)
 int db_easy_mesh_t::sync_table(db_client_t& db_client)
 {
     db_query_t    query;
-    void *ctx;
-
     memset(query, 0, sizeof(db_query_t));
     snprintf(query, sizeof(db_query_t), "select * from %s", m_table_name);
 
-    ctx = db_client.execute(query);
+    QueryResult result = db_client.execute(query);
 
-    return sync_db(db_client, ctx);
+    return sync_db(db_client, result);
 
 }
 
 bool db_easy_mesh_t::entry_exists_in_table(db_client_t& db_client, void *key)
 {
     db_query_t    query;
-    void *ctx;
-    
     memset(query, 0, sizeof(db_query_t));
     snprintf(query, sizeof(db_query_t), "select * from %s", m_table_name);
 
-    ctx = db_client.execute(query);
+    QueryResult result = db_client.execute(query);
 
-    return search_db(db_client, ctx, key);
+    return search_db(db_client, result, key);
 }
 
 void db_easy_mesh_t::delete_table(db_client_t& db_client)
@@ -367,18 +354,17 @@ int db_easy_mesh_t::create_table(db_client_t& db_client)
 int db_easy_mesh_t::load_table(db_client_t& db_client)
 {
     db_query_t    query;
-    db_result_t   result;
-    void *ctx;
     bool present = false;
 
     memset(query, 0, sizeof(db_query_t));
     snprintf(query, sizeof(db_query_t), "select name from sqlite_master where type = 'table'");
 
-    ctx = db_client.execute(query);
+    QueryResult query_result = db_client.execute(query);
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, result, 1);
-        if (strncmp(result, m_table_name, strlen(m_table_name)) == 0) {
+    while (query_result.next()) {
+        std::string table_name;
+        query_result.get_string(1, table_name);
+        if (table_name == m_table_name) {
             present = true;
         }
     }

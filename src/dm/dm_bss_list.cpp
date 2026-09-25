@@ -265,15 +265,14 @@ int dm_bss_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
     return ret;
 }
 
-bool dm_bss_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_bss_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t    str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 
         if (strncmp(str, static_cast<char *> (key), strlen(static_cast<char *> (key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -281,7 +280,7 @@ bool dm_bss_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
     return false;
 }
 
-int dm_bss_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_bss_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_bss_info_t info;
     mac_addr_str_t	mac;
@@ -290,49 +289,49 @@ int dm_bss_list_t::sync_db(db_client_t& db_client, void *ctx)
     char   *token_parts[EM_MAX_AKMS];
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_bss_info_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
 		dm_bss_t::parse_bss_id_from_key(str, &info.id);
 
-        db_client.get_string(ctx, mac, 2);
+        result.get_string(mac, 2);
         dm_easy_mesh_t::string_to_macbytes(mac, info.bssid.mac);
 
-        db_client.get_string(ctx, mac, 3);
+        result.get_string(mac, 3);
         dm_easy_mesh_t::string_to_macbytes(mac, info.ruid.mac);
 
-        db_client.get_string(ctx, info.ssid, 4);
-        info.enabled = db_client.get_number(ctx, 5);
+        result.get_string(info.ssid, 4);
+        info.enabled = result.get_number(5);
 
-        db_client.get_string(ctx, info.est_svc_params_be, 6);
-        db_client.get_string(ctx, info.est_svc_params_bk, 7);
-        db_client.get_string(ctx, info.est_svc_params_vi, 8);
-        db_client.get_string(ctx, info.est_svc_params_vo, 9);
+        result.get_string(info.est_svc_params_be, 6);
+        result.get_string(info.est_svc_params_bk, 7);
+        result.get_string(info.est_svc_params_vi, 8);
+        result.get_string(info.est_svc_params_vo, 9);
 
-        db_client.get_string(ctx, str, 10);
+        result.get_string(str, 10);
         for (i = 0; i < EM_MAX_AKMS; i++) {
             token_parts[i] = info.fronthaul_akm[i];
         }
         info.num_fronthaul_akms = static_cast<unsigned char> (get_strings_by_token(str, ',', EM_MAX_AKMS, token_parts));
 
-        db_client.get_string(ctx, str, 11);
+        result.get_string(str, 11);
 
         for (i = 0; i < EM_MAX_AKMS; i++) {
             token_parts[i] = info.backhaul_akm[i];
         }
         info.num_backhaul_akms = static_cast<unsigned char> (get_strings_by_token(str, ',', EM_MAX_AKMS, token_parts));
 
-        info.profile_1b_sta_allowed = db_client.get_number(ctx, 12);
-        info.profile_2b_sta_allowed = db_client.get_number(ctx, 13);
-        info.assoc_allowed_status = static_cast<unsigned int> (db_client.get_number(ctx, 14));
-        info.backhaul_use = db_client.get_number(ctx, 15);
-        info.fronthaul_use = db_client.get_number(ctx, 16);
-        info.r1_disallowed = db_client.get_number(ctx, 17);
-        info.r2_disallowed = db_client.get_number(ctx, 18);
-        info.multi_bssid = db_client.get_number(ctx, 19);
-        info.transmitted_bssid = db_client.get_number(ctx, 20);
-        info.vlan_id = static_cast<unsigned int> (db_client.get_number(ctx, 21));
+        info.profile_1b_sta_allowed = result.get_number(12);
+        info.profile_2b_sta_allowed = result.get_number(13);
+        info.assoc_allowed_status = static_cast<unsigned int> (result.get_number(14));
+        info.backhaul_use = result.get_number(15);
+        info.fronthaul_use = result.get_number(16);
+        info.r1_disallowed = result.get_number(17);
+        info.r2_disallowed = result.get_number(18);
+        info.multi_bssid = result.get_number(19);
+        info.transmitted_bssid = result.get_number(20);
+        info.vlan_id = static_cast<unsigned int> (result.get_number(21));
 
         update_list(dm_bss_t(&info), dm_orch_type_db_insert);
     }

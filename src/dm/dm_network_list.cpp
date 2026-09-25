@@ -187,15 +187,14 @@ int dm_network_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void
     return ret;
 }
 
-bool dm_network_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_network_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_string_t net_id;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, net_id, 1);
+    while (result.next()) {
+        result.get_string(net_id, 1);
 
         if (strncmp(net_id, static_cast<char *> (key), strlen(static_cast<char *> (key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -203,7 +202,7 @@ bool dm_network_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
     return false;
 }
 
-int dm_network_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_network_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     mac_addr_str_t	mac;
     em_network_info_t info;
@@ -215,15 +214,15 @@ int dm_network_list_t::sync_db(db_client_t& db_client, void *ctx)
 	strncpy(info.timestamp, date_time, sizeof(em_long_string_t));
 
     // there is only one row in network
-    while (db_client.next_result(ctx)) {
-		db_client.get_string(ctx, info.id, 1);
-		db_client.get_string(ctx, mac, 2);
+    while (result.next()) {
+		result.get_string(info.id, 1);
+		result.get_string(mac, 2);
 		dm_easy_mesh_t::string_to_macbytes(mac, info.ctrl_id.mac);
 
-		db_client.get_string(ctx, mac, 3);
+		result.get_string(mac, 3);
 		dm_easy_mesh_t::string_to_macbytes(mac, info.colocated_agent_id.mac);
 
-		info.media = static_cast<em_media_type_t> (db_client.get_number(ctx, 4));
+		info.media = static_cast<em_media_type_t> (result.get_number(4));
 
 		info.ctrl_id.media = info.media;
 		info.colocated_agent_id.media = info.media;

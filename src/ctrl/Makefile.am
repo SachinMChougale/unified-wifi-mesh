@@ -107,7 +107,9 @@ onewifi_em_ctrl_SOURCES =  \
      $(top_srcdir)/src/ctrl/tr_181/wfa_data_model/tr_181_helper.cpp\
      $(top_srcdir)/src/db/db_client.cpp \
      $(top_srcdir)/src/db/db_column.cpp \
+    $(top_srcdir)/src/db/database_session.cpp \
      $(top_srcdir)/src/db/db_easy_mesh.cpp \
+    $(top_srcdir)/src/db/query_result.cpp \
      $(top_srcdir)/src/dm/dm_ap_mld.cpp \
      $(top_srcdir)/src/dm/dm_cac_comp.cpp \
      $(top_srcdir)/src/dm/dm_easy_mesh.cpp \
@@ -180,6 +182,7 @@ onewifi_em_ctrl_test_SOURCES = $(onewifi_em_ctrl_SOURCES) \
 	$(top_srcdir)/tests/test_l1_dm_op_class.cpp \
 	$(top_srcdir)/tests/test_l1_em_onewifi.cpp \
 	$(top_srcdir)/tests/test_l1_db_client.cpp \
+    $(top_srcdir)/tests/test_l1_db_raii.cpp \
 	$(top_srcdir)/tests/test_l1_em_metrics.cpp \
 	$(top_srcdir)/tests/test_l1_em_orch.cpp \
 	$(top_srcdir)/tests/test_l1_em_provisioning.cpp \

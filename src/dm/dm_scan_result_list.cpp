@@ -275,33 +275,32 @@ int dm_scan_result_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, 
     return ret;
 }
 
-bool dm_scan_result_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_scan_result_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t  str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 		//printf("%s:%d: Comparing source: %s target: %s\n", __func__, __LINE__, str, (char *)key);
 
 		if (strncmp(str, static_cast<char *>(key), strlen(static_cast<char *>(key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
     return false;
 }
 
-int dm_scan_result_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_scan_result_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_scan_result_t scan_result;
 	em_scan_result_id_t	id;
     em_long_string_t   str;
 	int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&scan_result, 0, sizeof(em_scan_result_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
 		
 		dm_scan_result_t::parse_scan_result_id_from_key(str, &id);
 		memcpy(scan_result.id.net_id, id.net_id, sizeof(em_long_string_t));
@@ -312,26 +311,26 @@ int dm_scan_result_list_t::sync_db(db_client_t& db_client, void *ctx)
 		scan_result.id.channel = id.channel;
 		scan_result.id.scanner_type = id.scanner_type;
 
-		scan_result.scan_status = static_cast<unsigned char>(db_client.get_number(ctx, 2));
+		scan_result.scan_status = static_cast<unsigned char>(result.get_number(2));
 		
-		db_client.get_string(ctx, str, 3);
+		result.get_string(str, 3);
 		strncpy(scan_result.timestamp, str, sizeof(em_long_string_t));
 
-		scan_result.util = static_cast<unsigned char>(db_client.get_number(ctx, 4));
-		scan_result.noise = static_cast<unsigned char>(db_client.get_number(ctx, 5));
+		scan_result.util = static_cast<unsigned char>(result.get_number(4));
+		scan_result.noise = static_cast<unsigned char>(result.get_number(5));
 
-        db_client.get_string(ctx, str, 6);
+        result.get_string(str, 6);
 		dm_easy_mesh_t::string_to_macbytes(str, scan_result.neighbor[scan_result.num_neighbors].bssid);
 
-        db_client.get_string(ctx, str, 7);
+        result.get_string(str, 7);
 		snprintf(scan_result.neighbor[scan_result.num_neighbors].ssid, sizeof(ssid_t), "%.*s", static_cast<int>(sizeof(ssid_t) - 1), str);
-		scan_result.neighbor[scan_result.num_neighbors].signal_strength = static_cast<signed char>(db_client.get_number(ctx, 8));
-		scan_result.neighbor[scan_result.num_neighbors].bandwidth = static_cast<wifi_channelBandwidth_t>(db_client.get_number(ctx, 9));
-		scan_result.neighbor[scan_result.num_neighbors].bss_color = static_cast<unsigned char>(db_client.get_number(ctx, 10));
-		scan_result.neighbor[scan_result.num_neighbors].channel_util = static_cast<unsigned char>(db_client.get_number(ctx, 11));
-		scan_result.neighbor[scan_result.num_neighbors].sta_count = static_cast<short unsigned int>(db_client.get_number(ctx, 12));
-		scan_result.aggr_scan_duration = static_cast<unsigned int>(db_client.get_number(ctx, 13));
-		scan_result.scan_type = static_cast<unsigned char>(db_client.get_number(ctx, 14));
+		scan_result.neighbor[scan_result.num_neighbors].signal_strength = static_cast<signed char>(result.get_number(8));
+		scan_result.neighbor[scan_result.num_neighbors].bandwidth = static_cast<wifi_channelBandwidth_t>(result.get_number(9));
+		scan_result.neighbor[scan_result.num_neighbors].bss_color = static_cast<unsigned char>(result.get_number(10));
+		scan_result.neighbor[scan_result.num_neighbors].channel_util = static_cast<unsigned char>(result.get_number(11));
+		scan_result.neighbor[scan_result.num_neighbors].sta_count = static_cast<short unsigned int>(result.get_number(12));
+		scan_result.aggr_scan_duration = static_cast<unsigned int>(result.get_number(13));
+		scan_result.scan_type = static_cast<unsigned char>(result.get_number(14));
         
 		update_list(dm_scan_result_t(&scan_result), scan_result.num_neighbors, dm_orch_type_db_insert);
 		scan_result.num_neighbors++;

@@ -383,15 +383,14 @@ int dm_network_ssid_list_t::update_db(db_client_t& db_client, dm_orch_type_t op,
     return ret;
 }
 
-bool dm_network_ssid_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_network_ssid_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t id;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, id, 1);
+    while (result.next()) {
+        result.get_string(id, 1);
 
         if (strncmp(id, static_cast<char *> (key), strlen(static_cast<char *> (key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -399,7 +398,7 @@ bool dm_network_ssid_list_t::search_db(db_client_t& db_client, void *ctx, void *
     return false;
 }
 
-int dm_network_ssid_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_network_ssid_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
 	em_network_ssid_info_t info;
 	mac_addr_str_t	mac;
@@ -409,13 +408,13 @@ int dm_network_ssid_list_t::sync_db(db_client_t& db_client, void *ctx)
 	unsigned int i;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
 		memset(&info, 0, sizeof(em_network_ssid_info_t));
 
-		db_client.get_string(ctx, info.id, 1);
-		db_client.get_string(ctx, info.ssid, 2);
-        db_client.get_string(ctx, info.pass_phrase, 3);
-		db_client.get_string(ctx, str, 4);
+		result.get_string(info.id, 1);
+		result.get_string(info.ssid, 2);
+        result.get_string(info.pass_phrase, 3);
+		result.get_string(str, 4);
 		for (i = 0; i < EM_MAX_BANDS; i++) {
 			token_parts[i] = info.band[i];
 		}
@@ -424,9 +423,9 @@ int dm_network_ssid_list_t::sync_db(db_client_t& db_client, void *ctx)
 			//printf("%s:%d: Band[%d]: %s\n", __func__, __LINE__, i, info.band[i]);
 		}
 
-        info.enable = db_client.get_number(ctx, 5);
+        info.enable = result.get_number(5);
 
-		db_client.get_string(ctx, str, 6);
+		result.get_string(str, 6);
 		for (i = 0; i < EM_MAX_AKMS; i++) {
 			token_parts[i] = info.akm[i];
 		}
@@ -436,14 +435,14 @@ int dm_network_ssid_list_t::sync_db(db_client_t& db_client, void *ctx)
 		}
 
 
-		db_client.get_string(ctx, info.suite_select, 7);
-		info.advertisement = db_client.get_number(ctx, 8);
-		db_client.get_string(ctx, info.mfp, 9);
+		result.get_string(info.suite_select, 7);
+		info.advertisement = result.get_number(8);
+		result.get_string(info.mfp, 9);
 
-		db_client.get_string(ctx, mac, 10);
+		result.get_string(mac, 10);
 		dm_easy_mesh_t::string_to_macbytes(mac, info.mobility_domain);
 
-		db_client.get_string(ctx, str, 11);
+		result.get_string(str, 11);
 		for (i = 0; i < EM_MAX_HAUL_TYPES; i++) {
 			token_parts[i] = haul_type[i];
 		}
@@ -453,9 +452,9 @@ int dm_network_ssid_list_t::sync_db(db_client_t& db_client, void *ctx)
 			//printf("%s:%d: Haul Type[%d]: %s\n", __func__, __LINE__, i, info.haul_type[i]);
 		}
 
-		db_client.get_string(ctx, info.auth_type, 12);
+		result.get_string(info.auth_type, 12);
 
-		info.vlan_id = db_client.get_number(ctx, 13);
+		info.vlan_id = result.get_number(13);
         
 		update_list(dm_network_ssid_t(&info), dm_orch_type_db_insert);
     }

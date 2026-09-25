@@ -200,7 +200,6 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
     db_query_t  tmp, format, query;
     va_list list;
     db_fmt_t    col_fmt;
-    void *ctx;
 
     snprintf(format, sizeof(db_query_t), "update %s set ", m_table_name);
 
@@ -235,8 +234,7 @@ int dm_sta_list_t::update_row(db_client_t& db_client, ...)
 
     //printf("%s:%d: Query: %s\n", __func__, __LINE__, query);
 
-    ctx = db_client.execute(query);
-    db_client.free_result(ctx);
+    db_client.execute(query);
 
     return 0;
 }
@@ -288,15 +286,14 @@ int dm_sta_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *da
     return ret;
 }
 
-bool dm_sta_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_sta_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     mac_addr_str_t  mac;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, mac, 1);
+    while (result.next()) {
+        result.get_string(mac, 1);
 
         if (strncmp(mac, static_cast<char *>(key), strlen(static_cast<char *>(key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -311,49 +308,46 @@ bool dm_sta_list_t::compare_db(db_client_t& db_client, const dm_sta_t& sta)
     char frame_body[EM_MAX_FRAME_BODY_LEN*2];
 
     db_query_t    query;
-    void *ctx;
+    QueryResult result = db_client.execute(query);
 
     memset(query, 0, sizeof(db_query_t));
     snprintf(query, sizeof(db_query_t), "select * from %s", m_table_name);
 
-    ctx = db_client.execute(query);
-
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_sta_info_t));
 
-        db_client.get_string(ctx, mac, 1);
+        result.get_string(mac, 1);
         dm_easy_mesh_t::string_to_macbytes(mac, info.id);
 
-        db_client.get_string(ctx, mac, 2);
+        result.get_string(mac, 2);
         dm_easy_mesh_t::string_to_macbytes(mac, info.bssid);
 
-        db_client.get_string(ctx, mac, 3);
+        result.get_string(mac, 3);
         dm_easy_mesh_t::string_to_macbytes(mac, info.radiomac);
 
-        info.associated = db_client.get_number(ctx, 4);
-        info.last_ul_rate = static_cast<unsigned int>(db_client.get_number(ctx, 5));
-        info.last_dl_rate = static_cast<unsigned int>(db_client.get_number(ctx, 6));
-        info.est_ul_rate = static_cast<unsigned int>(db_client.get_number(ctx, 7));
-        info.est_dl_rate = static_cast<unsigned int>(db_client.get_number(ctx, 8));
-        info.last_conn_time = static_cast<unsigned int>(db_client.get_number(ctx, 9));
-        info.retrans_count = static_cast<unsigned int>(db_client.get_number(ctx, 10));
-        info.signal_strength = (db_client.get_number(ctx, 11));
-        info.rcpi = static_cast<unsigned char> (db_client.get_number(ctx, 12));
-        info.util_tx = static_cast<unsigned char> (db_client.get_number(ctx, 13));
-        info.util_rx = static_cast<unsigned char> (db_client.get_number(ctx, 14));
-        info.pkts_tx = static_cast<unsigned char> (db_client.get_number(ctx, 15));
-        info.pkts_rx = static_cast<unsigned char> (db_client.get_number(ctx, 16));
-        info.bytes_tx = static_cast<unsigned char> (db_client.get_number(ctx, 17));
-        info.bytes_rx = static_cast<unsigned char> (db_client.get_number(ctx, 18));
-        info.errors_tx = static_cast<unsigned char> (db_client.get_number(ctx, 19));
-        info.errors_rx = static_cast<unsigned char> (db_client.get_number(ctx, 20));
-        info.frame_body_len = static_cast<unsigned char> (db_client.get_number(ctx, 21));
+        info.associated = result.get_number(4);
+        info.last_ul_rate = static_cast<unsigned int>(result.get_number(5));
+        info.last_dl_rate = static_cast<unsigned int>(result.get_number(6));
+        info.est_ul_rate = static_cast<unsigned int>(result.get_number(7));
+        info.est_dl_rate = static_cast<unsigned int>(result.get_number(8));
+        info.last_conn_time = static_cast<unsigned int>(result.get_number(9));
+        info.retrans_count = static_cast<unsigned int>(result.get_number(10));
+        info.signal_strength = (result.get_number(11));
+        info.rcpi = static_cast<unsigned char> (result.get_number(12));
+        info.util_tx = static_cast<unsigned char> (result.get_number(13));
+        info.util_rx = static_cast<unsigned char> (result.get_number(14));
+        info.pkts_tx = static_cast<unsigned char> (result.get_number(15));
+        info.pkts_rx = static_cast<unsigned char> (result.get_number(16));
+        info.bytes_tx = static_cast<unsigned char> (result.get_number(17));
+        info.bytes_rx = static_cast<unsigned char> (result.get_number(18));
+        info.errors_tx = static_cast<unsigned char> (result.get_number(19));
+        info.errors_rx = static_cast<unsigned char> (result.get_number(20));
+        info.frame_body_len = static_cast<unsigned char> (result.get_number(21));
 
-        db_client.get_string(ctx, frame_body, 22);
+        result.get_string(frame_body, 22);
         dm_easy_mesh_t::unhex(static_cast<unsigned int>(strlen(frame_body)), frame_body, EM_MAX_FRAME_BODY_LEN, info.frame_body);
 
         if (memcmp(static_cast<const void*>(&sta.m_sta_info), static_cast<const void*>(&info), sizeof(em_sta_info_t)) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -361,45 +355,45 @@ bool dm_sta_list_t::compare_db(db_client_t& db_client, const dm_sta_t& sta)
     return false;
 }
 
-int dm_sta_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_sta_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_sta_info_t info;
     mac_addr_str_t	mac;
     int rc = 0;
     char frame_body[EM_MAX_FRAME_BODY_LEN*2];
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_sta_info_t));
 
-        db_client.get_string(ctx, mac, 1);
+        result.get_string(mac, 1);
         dm_easy_mesh_t::string_to_macbytes(mac, info.id);
 
-        db_client.get_string(ctx, mac, 2);
+        result.get_string(mac, 2);
         dm_easy_mesh_t::string_to_macbytes(mac, info.bssid);
 
-        db_client.get_string(ctx, mac, 3);
+        result.get_string(mac, 3);
         dm_easy_mesh_t::string_to_macbytes(mac, info.radiomac);
 
-        info.associated = db_client.get_number(ctx, 4);
-        info.last_ul_rate = static_cast<unsigned int>(db_client.get_number(ctx, 5));
-        info.last_dl_rate = static_cast<unsigned int>(db_client.get_number(ctx, 6));
-        info.est_ul_rate = static_cast<unsigned int>(db_client.get_number(ctx, 7));
-        info.est_dl_rate = static_cast<unsigned int>(db_client.get_number(ctx, 8));
-        info.last_conn_time = static_cast<unsigned int>(db_client.get_number(ctx, 9));
-        info.retrans_count = static_cast<unsigned int>(db_client.get_number(ctx, 10));
-        info.signal_strength = static_cast<signed int> (db_client.get_number(ctx, 11));
-        info.rcpi = static_cast<unsigned char> (db_client.get_number(ctx, 12));
-        info.util_tx = static_cast<unsigned int> (db_client.get_number(ctx, 13));
-        info.util_rx = static_cast<unsigned int> (db_client.get_number(ctx, 14));
-        info.pkts_tx = static_cast<unsigned int> (db_client.get_number(ctx, 15));
-        info.pkts_rx = static_cast<unsigned int> (db_client.get_number(ctx, 16));
-        info.bytes_tx = static_cast<unsigned int> (db_client.get_number(ctx, 17));
-        info.bytes_rx = static_cast<unsigned int> (db_client.get_number(ctx, 18));
-        info.errors_tx = static_cast<unsigned int> (db_client.get_number(ctx, 19));
-        info.errors_rx = static_cast<unsigned int> (db_client.get_number(ctx, 20));
-        info.frame_body_len = static_cast<unsigned int> (db_client.get_number(ctx, 21));
+        info.associated = result.get_number(4);
+        info.last_ul_rate = static_cast<unsigned int>(result.get_number(5));
+        info.last_dl_rate = static_cast<unsigned int>(result.get_number(6));
+        info.est_ul_rate = static_cast<unsigned int>(result.get_number(7));
+        info.est_dl_rate = static_cast<unsigned int>(result.get_number(8));
+        info.last_conn_time = static_cast<unsigned int>(result.get_number(9));
+        info.retrans_count = static_cast<unsigned int>(result.get_number(10));
+        info.signal_strength = static_cast<signed int> (result.get_number(11));
+        info.rcpi = static_cast<unsigned char> (result.get_number(12));
+        info.util_tx = static_cast<unsigned int> (result.get_number(13));
+        info.util_rx = static_cast<unsigned int> (result.get_number(14));
+        info.pkts_tx = static_cast<unsigned int> (result.get_number(15));
+        info.pkts_rx = static_cast<unsigned int> (result.get_number(16));
+        info.bytes_tx = static_cast<unsigned int> (result.get_number(17));
+        info.bytes_rx = static_cast<unsigned int> (result.get_number(18));
+        info.errors_tx = static_cast<unsigned int> (result.get_number(19));
+        info.errors_rx = static_cast<unsigned int> (result.get_number(20));
+        info.frame_body_len = static_cast<unsigned int> (result.get_number(21));
 
-        db_client.get_string(ctx, frame_body, 22);
+        result.get_string(frame_body, 22);
         dm_easy_mesh_t::unhex(static_cast<unsigned int>(strlen(frame_body)), frame_body, EM_MAX_FRAME_BODY_LEN, info.frame_body);
 
         update_list(dm_sta_t(&info), dm_orch_type_db_insert);

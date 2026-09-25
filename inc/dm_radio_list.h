@@ -118,7 +118,7 @@ public:
 	 * @note Ensure that the database client is properly initialized before
 	 * calling this function.
 	 */
-	int sync_db(db_client_t& db_client, void *ctx);
+	int sync_db(db_client_t& db_client, QueryResult& result);
     
 	/**!
 	 * @brief Updates the database with the specified operation and data.
@@ -153,7 +153,7 @@ public:
 	 *
 	 * @note Ensure that the database client is properly initialized before calling this function.
 	 */
-	bool search_db(db_client_t& db_client, void *ctx, void *key);
+	bool search_db(db_client_t& db_client, QueryResult& result, void *key);
     bool operator == (const db_easy_mesh_t& obj);
     
 	/**!

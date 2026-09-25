@@ -171,23 +171,22 @@ int dm_ssid_2_vid_map_t::update_db(db_client_t& db_client, dm_orch_type_t op, vo
     return ret;
 }
 
-bool dm_ssid_2_vid_map_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_ssid_2_vid_map_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
-    db_client.free_result(ctx);
     return false;
 }
 
-int dm_ssid_2_vid_map_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_ssid_2_vid_map_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_ssid_2_vid_map_info_t info;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
 	memset(&info, 0, sizeof(em_ssid_2_vid_map_info_t));
 
-	db_client.get_string(ctx, info.id, 1);
-	db_client.get_string(ctx, info.ssid, 2);
-        info.vid = static_cast<short unsigned int>(db_client.get_number(ctx, 3));
+	result.get_string(info.id, 1);
+	result.get_string(info.ssid, 2);
+        info.vid = static_cast<short unsigned int>(result.get_number(3));
         
 	update_list(dm_ssid_2_vid_map_t(&info));
     }

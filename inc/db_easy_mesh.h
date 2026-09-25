@@ -68,7 +68,7 @@ public:
 	 *
 	 * @note This function must be overridden in derived classes.
 	 */
-	virtual int sync_db(db_client_t& db_client, void *ctx) = 0;
+	virtual int sync_db(db_client_t& db_client, QueryResult& result) = 0;
     
 	/**!
 	 * @brief Updates the database with the given operation type and data.
@@ -98,7 +98,7 @@ public:
 	 *
 	 * @note This is a pure virtual function and must be implemented by the derived class.
 	 */
-	virtual bool search_db(db_client_t& db_client, void *ctx, void *key) = 0;
+	virtual bool search_db(db_client_t& db_client, QueryResult& result, void *key) = 0;
     virtual bool operator == (const db_easy_mesh_t& obj) = 0;
 
     

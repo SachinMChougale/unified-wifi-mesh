@@ -26,12 +26,6 @@
 #include "db_client.h"
 #include "em_base.h"
 
-struct result_context_t
-{
-    sqlite3_stmt *statement;
-    bool stepped;
-};
-
 static const char *default_database_path = "/var/lib/unified-wifi-mesh/unified_wifi_mesh.db";
 
 // Not being used
@@ -77,7 +71,8 @@ int db_client_t::begin_transaction()
     {
         return -1;
     }
-    return execute("BEGIN IMMEDIATE TRANSACTION") == NULL && sqlite3_get_autocommit(m_con) == 0 ? 0 : -1;
+    QueryResult result = execute("BEGIN IMMEDIATE TRANSACTION");
+    return !result.valid() && sqlite3_get_autocommit(m_con) == 0 ? 0 : -1;
 }
 
 // Not being used
@@ -87,7 +82,8 @@ int db_client_t::commit()
     {
         return -1;
     }
-    return execute("COMMIT") == NULL && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
+    QueryResult result = execute("COMMIT");
+    return !result.valid() && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
 }
 
 // Not being used
@@ -97,16 +93,17 @@ int db_client_t::rollback()
     {
         return -1;
     }
-    return execute("ROLLBACK") == NULL && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
+    QueryResult result = execute("ROLLBACK");
+    return !result.valid() && sqlite3_get_autocommit(m_con) != 0 ? 0 : -1;
 }
 
-void *db_client_t::execute(const char *query)
+QueryResult db_client_t::execute(const char *query)
 {
     // Ensure the database connection is valid before trying to execute SQL.
     if (!m_con)
     {
         printf("%s:%d: Query: %s m_con is NULL, exiting\n", __func__, __LINE__, query);
-        return NULL;
+        return QueryResult(nullptr, nullptr, SQLITE_MISUSE);
     }
 
     // Serialize access to the SQLite handle so concurrent callers do not race.
@@ -119,7 +116,7 @@ void *db_client_t::execute(const char *query)
     {
         printf("%s:%d: Query failed: %s\n", __func__, __LINE__, query);
         printf("%s:%d: Error: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
-        return NULL;
+        return QueryResult(m_con, nullptr, rc);
     }
 
     // Execute the prepared statement once.
@@ -128,8 +125,12 @@ void *db_client_t::execute(const char *query)
     // Non-SELECT statements like INSERT/UPDATE/DELETE typically finish with SQLITE_DONE.
     if (rc == SQLITE_DONE)
     {
+        if (sqlite3_column_count(statement) > 0)
+        {
+            return QueryResult(m_con, statement, SQLITE_DONE);
+        }
         sqlite3_finalize(statement);
-        return NULL;
+        return QueryResult(m_con, nullptr, SQLITE_DONE);
     }
 
     // Any other result type besides ROW means the query failed or returned an unexpected value.
@@ -137,85 +138,10 @@ void *db_client_t::execute(const char *query)
     {
         printf("%s:%d: Error: %s\n", __func__, __LINE__, sqlite3_errmsg(m_con));
         sqlite3_finalize(statement);
-        return NULL;
+        return QueryResult(m_con, nullptr, rc);
     }
 
-    // For SELECT-style queries, keep the statement alive in a result context so the caller can
-    // iterate row-by-row using next_result(), get_string(), and get_number().
-    result_context_t *ctx = new result_context_t;
-    ctx->statement = statement;
-    ctx->stepped = false;
-
-    return ctx;
-}
-
-bool db_client_t::next_result(void *ctx)
-{
-    if (ctx == NULL)
-    {
-        return false;
-    }
-
-    result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
-    std::lock_guard<std::mutex> lock(m_mutex);
-    int rc = res_ctx->stepped ? sqlite3_step(res_ctx->statement) : SQLITE_ROW;
-    res_ctx->stepped = true;
-    if (rc != SQLITE_ROW)
-    {
-        sqlite3_finalize(res_ctx->statement);
-        delete res_ctx;
-        return false;
-    }
-
-    return true;
-}
-
-void db_client_t::free_result(void *ctx)
-{
-    if (ctx == NULL)
-    {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(m_mutex);
-    result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
-    sqlite3_finalize(res_ctx->statement);
-    delete res_ctx;
-}
-
-char *db_client_t::get_string(void *ctx, char *str, unsigned int col)
-{
-    if (ctx == NULL)
-    {
-        return NULL;
-    }
-
-    result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
-
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    assert(col > 0);
-    const unsigned char *value = sqlite3_column_text(res_ctx->statement, static_cast<int>(col - 1));
-    if (value == NULL)
-    {
-        return NULL;
-    }
-    snprintf(str, static_cast<size_t>(sqlite3_column_bytes(res_ctx->statement, static_cast<int>(col - 1))) + 1, "%s", value);
-    return str;
-}
-
-int db_client_t::get_number(void *ctx, unsigned int col)
-{
-    assert(ctx != NULL);
-
-    result_context_t *res_ctx = static_cast<result_context_t *>(ctx);
-
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    if (col == 0 || sqlite3_column_type(res_ctx->statement, static_cast<int>(col - 1)) == SQLITE_NULL)
-    {
-        return 0;
-    }
-    return sqlite3_column_int(res_ctx->statement, static_cast<int>(col - 1));
+    return QueryResult(m_con, statement, rc);
 }
 
 int db_client_t::connect(const char *path)
@@ -279,4 +205,9 @@ db_client_t::~db_client_t()
         sqlite3_close(m_con);
         m_con = NULL;
     }
+}
+
+sqlite3 *db_client_t::native_handle() const
+{
+    return m_con;
 }

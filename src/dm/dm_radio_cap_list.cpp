@@ -204,28 +204,27 @@ int dm_radio_cap_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, vo
     return ret;
 }
 
-bool dm_radio_cap_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_radio_cap_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
-    db_client.free_result(ctx);
     return false;
 }
 
-int dm_radio_cap_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_radio_cap_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_radio_cap_info_t info;
     mac_addr_str_t	mac_str;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
 	memset(&info, 0, sizeof(em_radio_cap_info_t));
 
-	db_client.get_string(ctx, mac_str, 1);
+	result.get_string(mac_str, 1);
 	dm_easy_mesh_t::string_to_macbytes(mac_str, info.ruid.mac);
 
-	//db_client.get_string(ctx, info.ht_cap, 2);
-	//db_client.get_string(ctx, info.vht_cap, 3);
-	//db_client.get_string(ctx, info.he_cap, 4);
-	//db_client.get_string(ctx, info.wifi7_cap, 5);
+	//result.get_string(info.ht_cap, 2);
+	//result.get_string(info.vht_cap, 3);
+	//result.get_string(info.he_cap, 4);
+	//result.get_string(info.wifi7_cap, 5);
 		
 	update_list(dm_radio_cap_t(&info), dm_orch_type_db_insert);
     }

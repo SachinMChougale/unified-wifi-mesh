@@ -239,15 +239,14 @@ int dm_radio_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void *
     return ret;
 }
 
-bool dm_radio_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_radio_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t  str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 
         if (strncmp(str, static_cast<char *>(key), strlen(static_cast<char *>(key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -255,44 +254,44 @@ bool dm_radio_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
     return false;
 }
 
-int dm_radio_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_radio_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_radio_info_t info;
     mac_addr_str_t	mac;
     em_long_string_t   str;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_radio_info_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
 		dm_radio_t::parse_radio_id_from_key(str, &info.id);
 
-        db_client.get_string(ctx, mac, 2);
+        result.get_string(mac, 2);
         dm_easy_mesh_t::string_to_macbytes(mac, info.intf.mac);
 
-        info.enabled = db_client.get_number(ctx, 3);
-        info.media_data.media_type = static_cast<short unsigned int>(db_client.get_number(ctx, 4));
-        info.media_data.band = static_cast<unsigned char>(db_client.get_number(ctx, 5));
-        info.band = static_cast<em_freq_band_t> (db_client.get_number(ctx, 5));
-        info.media_data.center_freq_index_1 = static_cast<unsigned char>(db_client.get_number(ctx, 6));
-        info.media_data.center_freq_index_2 = static_cast<unsigned char>(db_client.get_number(ctx, 7));
-        info.number_of_bss = static_cast<unsigned int>(db_client.get_number(ctx, 8));
-        info.number_of_unassoc_sta = static_cast<unsigned int>(db_client.get_number(ctx, 9));
-        info.noise = db_client.get_number(ctx, 10);
-        info.utilization = static_cast<short unsigned int>(db_client.get_number(ctx, 11));
-        info.traffic_sep_combined_fronthaul = db_client.get_number(ctx, 12);
-        info.traffic_sep_combined_backhaul = db_client.get_number(ctx, 13);
-        info.steering_policy = static_cast<unsigned int>(db_client.get_number(ctx, 14));
-        info.channel_util_threshold = static_cast<unsigned int>(db_client.get_number(ctx, 15));
-        info.rcpi_steering_threshold = static_cast<unsigned int>(db_client.get_number(ctx, 16));
-        info.sta_reporting_rcpi_threshold = static_cast<unsigned int>(db_client.get_number(ctx, 17));
-        info.sta_reporting_hysteresis_margin_override = static_cast<unsigned int>(db_client.get_number(ctx, 18));
-        info.channel_utilization_reporting_threshold = static_cast<unsigned int>(db_client.get_number(ctx, 19));
-        info.associated_sta_traffic_stats_inclusion_policy = db_client.get_number(ctx, 20);
-        info.associated_sta_link_mterics_inclusion_policy = db_client.get_number(ctx, 21);
+        info.enabled = result.get_number(3);
+        info.media_data.media_type = static_cast<short unsigned int>(result.get_number(4));
+        info.media_data.band = static_cast<unsigned char>(result.get_number(5));
+        info.band = static_cast<em_freq_band_t> (result.get_number(5));
+        info.media_data.center_freq_index_1 = static_cast<unsigned char>(result.get_number(6));
+        info.media_data.center_freq_index_2 = static_cast<unsigned char>(result.get_number(7));
+        info.number_of_bss = static_cast<unsigned int>(result.get_number(8));
+        info.number_of_unassoc_sta = static_cast<unsigned int>(result.get_number(9));
+        info.noise = result.get_number(10);
+        info.utilization = static_cast<short unsigned int>(result.get_number(11));
+        info.traffic_sep_combined_fronthaul = result.get_number(12);
+        info.traffic_sep_combined_backhaul = result.get_number(13);
+        info.steering_policy = static_cast<unsigned int>(result.get_number(14));
+        info.channel_util_threshold = static_cast<unsigned int>(result.get_number(15));
+        info.rcpi_steering_threshold = static_cast<unsigned int>(result.get_number(16));
+        info.sta_reporting_rcpi_threshold = static_cast<unsigned int>(result.get_number(17));
+        info.sta_reporting_hysteresis_margin_override = static_cast<unsigned int>(result.get_number(18));
+        info.channel_utilization_reporting_threshold = static_cast<unsigned int>(result.get_number(19));
+        info.associated_sta_traffic_stats_inclusion_policy = result.get_number(20);
+        info.associated_sta_link_mterics_inclusion_policy = result.get_number(21);
 
-        db_client.get_string(ctx, info.chip_vendor, 22);
+        result.get_string(info.chip_vendor, 22);
 
         update_list(dm_radio_t(&info), dm_orch_type_db_insert);
     }

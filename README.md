@@ -8,5 +8,7 @@ argument when required.
 Build systems require the SQLite3 development package (`libsqlite3-dev` on
 Debian/Ubuntu) and `pkg-config`. MariaDB is not required. See
 `docs/sqlite3_migration.md` for migrating an existing MariaDB database.
+See `docs/sqlite_raii_design.md` for the SQLite C++ RAII ownership and
+migration design.
 
 The documentation is available in Unified-Wifi-Mesh file under docs directory

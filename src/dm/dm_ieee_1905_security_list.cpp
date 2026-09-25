@@ -203,27 +203,26 @@ int dm_ieee_1905_security_list_t::update_db(db_client_t& db_client, dm_orch_type
     return ret;
 }
 
-bool dm_ieee_1905_security_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_ieee_1905_security_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
-    db_client.free_result(ctx);
     return false;
 }
 
-int dm_ieee_1905_security_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_ieee_1905_security_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
 	em_ieee_1905_security_info_t info;
 	mac_addr_str_t	mac;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
 		memset(&info, 0, sizeof(em_ieee_1905_security_info_t));
 
-		db_client.get_string(ctx, mac, 1);
+		result.get_string(mac, 1);
         dm_easy_mesh_t::string_to_macbytes(mac, info.id);
 
-        info.sec_cap.onboarding_proto = static_cast<unsigned char> (db_client.get_number(ctx, 2));
-        info.sec_cap.integrity_algo = static_cast<unsigned char> (db_client.get_number(ctx, 3));
-        info.sec_cap.encryption_algo = static_cast<unsigned char> (db_client.get_number(ctx, 4));
+        info.sec_cap.onboarding_proto = static_cast<unsigned char> (result.get_number(2));
+        info.sec_cap.integrity_algo = static_cast<unsigned char> (result.get_number(3));
+        info.sec_cap.encryption_algo = static_cast<unsigned char> (result.get_number(4));
         
 		update_list(dm_ieee_1905_security_t(&info), dm_orch_type_db_insert);
     }

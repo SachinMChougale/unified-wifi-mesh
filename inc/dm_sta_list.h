@@ -140,7 +140,7 @@ public:
 	 *
 	 * @note Ensure that the database client is properly initialized before calling this function.
 	 */
-	int sync_db(db_client_t& db_client, void *ctx);
+	int sync_db(db_client_t& db_client, QueryResult& result);
     
 	/**!
 	 * @brief Updates the database with the given operation and data.
@@ -172,7 +172,7 @@ public:
 	 *
 	 * @note Ensure that the database client is properly initialized before calling this function.
 	 */
-	bool search_db(db_client_t& db_client, void *ctx, void *key);
+	bool search_db(db_client_t& db_client, QueryResult& result, void *key);
     
 	/**!
 	 * @brief Compares a database client with a station.

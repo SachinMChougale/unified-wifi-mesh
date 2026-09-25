@@ -185,15 +185,14 @@ int dm_neighbor_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, voi
     return ret;
 }
 
-bool dm_neighbor_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_neighbor_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t    str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 
         if (strncmp(str, static_cast<char *> (key), strlen(static_cast<char *> (key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -201,28 +200,28 @@ bool dm_neighbor_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
     return false;
 }
 
-int dm_neighbor_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_neighbor_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_neighbor_info_t info;
     mac_addr_str_t	mac;
     em_long_string_t   str;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_neighbor_info_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
 		dm_easy_mesh_t::string_to_macbytes(str, info.nbr);
 
-		info.pos_x = static_cast<float> (db_client.get_number(ctx, 2));
-		info.pos_y = static_cast<float> (db_client.get_number(ctx, 3));
-		info.pos_z = static_cast<float> (db_client.get_number(ctx, 4));
+		info.pos_x = static_cast<float> (result.get_number(2));
+		info.pos_y = static_cast<float> (result.get_number(3));
+		info.pos_z = static_cast<float> (result.get_number(4));
         
-		db_client.get_string(ctx, mac, 5);
+		result.get_string(mac, 5);
         dm_easy_mesh_t::string_to_macbytes(mac, info.next_hop);
 
-        info.num_hops = static_cast<unsigned int> (db_client.get_number(ctx, 6));
-        info.path_loss = db_client.get_number(ctx, 7);
+        info.num_hops = static_cast<unsigned int> (result.get_number(6));
+        info.path_loss = result.get_number(7);
 
         update_list(dm_neighbor_t(&info), dm_orch_type_db_insert);
     }

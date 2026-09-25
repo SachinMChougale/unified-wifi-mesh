@@ -303,23 +303,22 @@ int dm_op_class_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, voi
     return ret;
 }
 
-bool dm_op_class_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_op_class_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t  str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 		//printf("%s:%d: Comparing source: %s target: %s\n", __func__, __LINE__, str, (char *)key);
 
         if (strncmp(str, static_cast<char *>(key), strlen(static_cast<char *>(key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
     return false;
 }
 
-int dm_op_class_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_op_class_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_op_class_info_t info;
     em_long_string_t   id;
@@ -329,15 +328,15 @@ int dm_op_class_list_t::sync_db(db_client_t& db_client, void *ctx)
     unsigned int i = 0;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_op_class_info_t));
 
-        db_client.get_string(ctx, id, 1);
+        result.get_string(id, 1);
         dm_op_class_t::parse_op_class_id_from_key(id, &info.id);
-        info.op_class = static_cast<short unsigned int>(db_client.get_number(ctx, 2));
-        info.channel = static_cast<short unsigned int>(db_client.get_number(ctx, 3));
+        info.op_class = static_cast<short unsigned int>(result.get_number(2));
+        info.channel = static_cast<short unsigned int>(result.get_number(3));
 
-        db_client.get_string(ctx, str, 4);
+        result.get_string(str, 4);
         for (i = 0; i < EM_MAX_CHANNELS_IN_LIST; i++) {
             token_parts[i] = ch_str[i];
         }
@@ -355,7 +354,7 @@ int dm_op_class_list_t::sync_db(db_client_t& db_client, void *ctx)
         // For other types, set preference as valid but with 0 preference value.
         if (info.id.type == em_op_class_type_preference || info.id.type == em_op_class_type_anticipated)
         {
-            db_client.get_string(ctx, str, 5);
+            result.get_string(str, 5);
             for (i = 0; i < EM_MAX_CHANNELS_IN_LIST; i++) {
                 token_parts[i] = ch_str[i];
             }
@@ -372,18 +371,18 @@ int dm_op_class_list_t::sync_db(db_client_t& db_client, void *ctx)
                     info.channel_pref[i] = static_cast<unsigned char>(atoi(token_parts[i]));
                 }
             }
-            info.pref_valid = static_cast<short unsigned int>(db_client.get_number(ctx, 6));
+            info.pref_valid = static_cast<short unsigned int>(result.get_number(6));
         } else {
             memset(info.channel_pref, 0, sizeof(info.channel_pref));
             info.pref_valid = EM_CH_PREF_ENTRY_VALID;
         }
 
-        info.tx_power = db_client.get_number(ctx, 7);
-        info.max_tx_power = db_client.get_number(ctx, 8);
+        info.tx_power = result.get_number(7);
+        info.max_tx_power = result.get_number(8);
 
-        info.mins_since_cac_comp = static_cast<short unsigned int>(db_client.get_number(ctx, 9));
-        info.sec_remain_non_occ_dur = static_cast<short unsigned int>(db_client.get_number(ctx, 10));
-        info.countdown_cac_comp = static_cast<unsigned int>(db_client.get_number(ctx, 11));
+        info.mins_since_cac_comp = static_cast<short unsigned int>(result.get_number(9));
+        info.sec_remain_non_occ_dur = static_cast<short unsigned int>(result.get_number(10));
+        info.countdown_cac_comp = static_cast<unsigned int>(result.get_number(11));
 
         update_list(dm_op_class_t(&info), dm_orch_type_db_insert);
     }

@@ -237,15 +237,14 @@ int dm_device_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void 
     return ret;
 }
 
-bool dm_device_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_device_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t	str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 
         if (strncmp(str, static_cast<char *> (key), strlen(static_cast<char *> (key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
@@ -253,55 +252,55 @@ bool dm_device_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
 	return false;
 }
 
-int dm_device_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_device_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_device_info_t info = {};
     mac_addr_str_t	mac;
     em_long_string_t   str;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_device_info_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
         dm_device_t::parse_device_id_from_key(str, &info.id);
         
-		db_client.get_string(ctx, mac, 2);
+		result.get_string(mac, 2);
 		dm_easy_mesh_t::string_to_macbytes(mac, info.intf.mac);
 
-        info.profile = static_cast<em_profile_type_t> (db_client.get_number(ctx, 3));
-        db_client.get_string(ctx, info.multi_ap_cap, 4);
-        info.coll_interval = static_cast<unsigned int> (db_client.get_number(ctx, 5));
-        info.report_unsuccess_assocs = static_cast<unsigned int> (db_client.get_number(ctx, 6));
-        info.max_reporting_rate = static_cast<short unsigned int> (db_client.get_number(ctx, 7));
-        info.ap_metrics_reporting_interval = static_cast<short unsigned int> (db_client.get_number(ctx, 8));
-        db_client.get_string(ctx, info.manufacturer, 9);
-        db_client.get_string(ctx, info.serial_number, 10);
-        db_client.get_string(ctx, info.manufacturer_model, 11);
-        db_client.get_string(ctx, info.software_ver, 12);
-        db_client.get_string(ctx, info.exec_env, 13);
-        db_client.get_string(ctx, info.country_code, 14);
-        info.traffic_sep_allowed = db_client.get_number(ctx, 15);
-        info.svc_prio_allowed = db_client.get_number(ctx, 16);
-        info.dfs_enable = db_client.get_number(ctx, 17);
-        info.max_unsuccessful_assoc_report_rate = static_cast<short unsigned int> (db_client.get_number(ctx, 18));
-        info.sta_steer_state = db_client.get_number(ctx, 19);
-        info.coord_cac_allowed = db_client.get_number(ctx, 20);
+        info.profile = static_cast<em_profile_type_t> (result.get_number(3));
+        result.get_string(info.multi_ap_cap, 4);
+        info.coll_interval = static_cast<unsigned int> (result.get_number(5));
+        info.report_unsuccess_assocs = static_cast<unsigned int> (result.get_number(6));
+        info.max_reporting_rate = static_cast<short unsigned int> (result.get_number(7));
+        info.ap_metrics_reporting_interval = static_cast<short unsigned int> (result.get_number(8));
+        result.get_string(info.manufacturer, 9);
+        result.get_string(info.serial_number, 10);
+        result.get_string(info.manufacturer_model, 11);
+        result.get_string(info.software_ver, 12);
+        result.get_string(info.exec_env, 13);
+        result.get_string(info.country_code, 14);
+        info.traffic_sep_allowed = result.get_number(15);
+        info.svc_prio_allowed = result.get_number(16);
+        info.dfs_enable = result.get_number(17);
+        info.max_unsuccessful_assoc_report_rate = static_cast<short unsigned int> (result.get_number(18));
+        info.sta_steer_state = result.get_number(19);
+        info.coord_cac_allowed = result.get_number(20);
 
-        db_client.get_string(ctx, mac, 21);
+        result.get_string(mac, 21);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_mac.mac);
 
-        db_client.get_string(ctx, str, 22);
+        result.get_string(str, 22);
     
-        db_client.get_string(ctx, mac, 23);
+        result.get_string(mac, 23);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_alid.mac);
 
-        db_client.get_string(ctx, mac, 24);
+        result.get_string(mac, 24);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_sta);
 
-        info.traffic_sep_cap = db_client.get_number(ctx, 25);
-        info.easy_conn_cap = db_client.get_number(ctx, 26);
-        info.test_cap = static_cast<unsigned char> (db_client.get_number(ctx, 27));
+        info.traffic_sep_cap = result.get_number(25);
+        info.easy_conn_cap = result.get_number(26);
+        info.test_cap = static_cast<unsigned char> (result.get_number(27));
 
         update_list(dm_device_t(&info), dm_orch_type_db_insert);
     }
@@ -316,55 +315,53 @@ bool dm_device_list_t::compare_db(db_client_t& db_client, const dm_device_t& sta
     mac_addr_str_t mac;
     em_long_string_t   str;
     db_query_t    query;
-    void *ctx;
+    QueryResult result = db_client.execute(query);
 
     memset(query, 0, sizeof(db_query_t));
     snprintf(query, sizeof(db_query_t), "select * from %s", m_table_name);
 
-    ctx = db_client.execute(query);
-
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&info, 0, sizeof(em_device_info_t));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
         dm_device_t::parse_device_id_from_key(str, &info.id);
 
-        db_client.get_string(ctx, str, 2);
+        result.get_string(str, 2);
         dm_easy_mesh_t::string_to_macbytes(mac, info.intf.mac);
 
-        info.profile = static_cast<em_profile_type_t> (db_client.get_number(ctx, 3));
-        db_client.get_string(ctx, info.multi_ap_cap, 4);
-        info.coll_interval = static_cast<unsigned int> (db_client.get_number(ctx, 5));
-        info.report_unsuccess_assocs = static_cast<unsigned int> (db_client.get_number(ctx, 6));
-        info.max_reporting_rate = static_cast<short unsigned int> (db_client.get_number(ctx, 7));
-        info.ap_metrics_reporting_interval = static_cast<short unsigned int> (db_client.get_number(ctx, 8));
-        db_client.get_string(ctx, info.manufacturer, 9);
-        db_client.get_string(ctx, info.serial_number, 10);
-        db_client.get_string(ctx, info.manufacturer_model, 11);
-        db_client.get_string(ctx, info.software_ver, 12);
-        db_client.get_string(ctx, info.exec_env, 13);
-        db_client.get_string(ctx, info.country_code, 14);
-        info.traffic_sep_allowed = db_client.get_number(ctx, 15);
-        info.svc_prio_allowed = db_client.get_number(ctx, 16);
-        info.dfs_enable = db_client.get_number(ctx, 17);
-        info.max_unsuccessful_assoc_report_rate = static_cast<short unsigned int> (db_client.get_number(ctx, 18));
-        info.sta_steer_state = db_client.get_number(ctx, 19);
-        info.coord_cac_allowed = db_client.get_number(ctx, 20);
+        info.profile = static_cast<em_profile_type_t> (result.get_number(3));
+        result.get_string(info.multi_ap_cap, 4);
+        info.coll_interval = static_cast<unsigned int> (result.get_number(5));
+        info.report_unsuccess_assocs = static_cast<unsigned int> (result.get_number(6));
+        info.max_reporting_rate = static_cast<short unsigned int> (result.get_number(7));
+        info.ap_metrics_reporting_interval = static_cast<short unsigned int> (result.get_number(8));
+        result.get_string(info.manufacturer, 9);
+        result.get_string(info.serial_number, 10);
+        result.get_string(info.manufacturer_model, 11);
+        result.get_string(info.software_ver, 12);
+        result.get_string(info.exec_env, 13);
+        result.get_string(info.country_code, 14);
+        info.traffic_sep_allowed = result.get_number(15);
+        info.svc_prio_allowed = result.get_number(16);
+        info.dfs_enable = result.get_number(17);
+        info.max_unsuccessful_assoc_report_rate = static_cast<short unsigned int> (result.get_number(18));
+        info.sta_steer_state = result.get_number(19);
+        info.coord_cac_allowed = result.get_number(20);
 
-        db_client.get_string(ctx, mac, 21);
+        result.get_string(mac, 21);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_mac.mac);
 
-        db_client.get_string(ctx, str, 22);
+        result.get_string(str, 22);
 
-        db_client.get_string(ctx, mac, 23);
+        result.get_string(mac, 23);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_alid.mac);
 
-        db_client.get_string(ctx, mac, 24);
+        result.get_string(mac, 24);
         dm_easy_mesh_t::string_to_macbytes(mac, info.backhaul_sta);
 
-        info.traffic_sep_cap = db_client.get_number(ctx, 25);
-        info.easy_conn_cap = db_client.get_number(ctx, 26);
-        info.test_cap = static_cast<unsigned char> (db_client.get_number(ctx, 27));
+        info.traffic_sep_cap = result.get_number(25);
+        info.easy_conn_cap = result.get_number(26);
+        info.test_cap = static_cast<unsigned char> (result.get_number(27));
 
         // Runtime-only metrics (uptime, memory, cpu) are never persisted to the DB,
         // so they must not affect this comparison; copy them from sta to avoid a
@@ -377,7 +374,6 @@ bool dm_device_list_t::compare_db(db_client_t& db_client, const dm_device_t& sta
         info.cpu_temp = sta.m_device_info.cpu_temp;
 
         if (memcmp(static_cast<const void*>(&sta.m_device_info), static_cast<const void*>(&info), sizeof(em_device_info_t)) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }

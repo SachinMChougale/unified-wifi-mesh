@@ -330,23 +330,22 @@ int dm_policy_list_t::update_db(db_client_t& db_client, dm_orch_type_t op, void 
     return ret;
 }
 
-bool dm_policy_list_t::search_db(db_client_t& db_client, void *ctx, void *key)
+bool dm_policy_list_t::search_db(db_client_t& db_client, QueryResult& result, void *key)
 {
     em_long_string_t  str;
 
-    while (db_client.next_result(ctx)) {
-        db_client.get_string(ctx, str, 1);
+    while (result.next()) {
+        result.get_string(str, 1);
 		//printf("%s:%d: Comparing source: %s target: %s\n", __func__, __LINE__, str, (char *)key);
 
         if (strncmp(str, static_cast<char *>(key), strlen(static_cast<char *>(key))) == 0) {
-            db_client.free_result(ctx);
             return true;
         }
     }
     return false;
 }
 
-int dm_policy_list_t::sync_db(db_client_t& db_client, void *ctx)
+int dm_policy_list_t::sync_db(db_client_t& db_client, QueryResult& result)
 {
     em_policy_t policy;
 	em_policy_id_t	id;
@@ -357,18 +356,18 @@ int dm_policy_list_t::sync_db(db_client_t& db_client, void *ctx)
 	unsigned int i;
     int rc = 0;
 
-    while (db_client.next_result(ctx)) {
+    while (result.next()) {
         memset(&policy, 0, sizeof(em_policy_t));
         memset(&id, 0, sizeof(id));
 
-        db_client.get_string(ctx, str, 1);
+        result.get_string(str, 1);
 		dm_policy_t::parse_dev_radio_mac_from_key(str, &id);
 		strncpy(policy.id.net_id, id.net_id, sizeof(policy.id.net_id));
 		memcpy(policy.id.dev_mac, id.dev_mac, sizeof(mac_address_t));
 		memcpy(policy.id.radio_mac, id.radio_mac, sizeof(mac_address_t));
-        policy.id.type = static_cast<em_policy_id_type_t>(db_client.get_number(ctx, 2));
-        policy.interval = static_cast<unsigned short int>(db_client.get_number(ctx, 3));
-        db_client.get_string(ctx, sta_mac_list_str, 4);
+        policy.id.type = static_cast<em_policy_id_type_t>(result.get_number(2));
+        policy.interval = static_cast<unsigned short int>(result.get_number(3));
+        result.get_string(sta_mac_list_str, 4);
 		for (i = 0; i < EM_MAX_STA_PER_STEER_POLICY; i++) {
             token_parts[i] = sta_mac_str[i];
         }
@@ -378,20 +377,20 @@ int dm_policy_list_t::sync_db(db_client_t& db_client, void *ctx)
 			dm_easy_mesh_t::string_to_macbytes(sta_mac_str[i], policy.sta_mac[i]);
 		}		
 
-		policy.policy = static_cast<em_steering_policy_type_t>(db_client.get_number(ctx, 5));
-		policy.interval = static_cast<short unsigned int>(db_client.get_number(ctx, 6));
-		policy.rcpi_threshold = static_cast<short unsigned int>(db_client.get_number(ctx, 7));
-		policy.rcpi_hysteresis = static_cast<short unsigned int>(db_client.get_number(ctx, 8));
-		policy.util_threshold = static_cast<short unsigned int>(db_client.get_number(ctx, 9));
-		policy.sta_traffic_stats = db_client.get_number(ctx, 10);
-		policy.sta_link_metric = db_client.get_number(ctx, 11);
-		policy.sta_status = db_client.get_number(ctx, 12);
-		db_client.get_string(ctx, policy.managed_sta_marker, 13);
-		policy.independent_scan_report = db_client.get_number(ctx, 14);
-		policy.profile_1_sta_disallowed = db_client.get_number(ctx, 15);
-		policy.profile_2_sta_disallowed = db_client.get_number(ctx, 16);
-        policy.def_8021q_settings.primary_vid = static_cast<unsigned short>(db_client.get_number(ctx, 17));
-        policy.def_8021q_settings.default_pcp = static_cast<unsigned char>(db_client.get_number(ctx, 18));
+		policy.policy = static_cast<em_steering_policy_type_t>(result.get_number(5));
+		policy.interval = static_cast<short unsigned int>(result.get_number(6));
+		policy.rcpi_threshold = static_cast<short unsigned int>(result.get_number(7));
+		policy.rcpi_hysteresis = static_cast<short unsigned int>(result.get_number(8));
+		policy.util_threshold = static_cast<short unsigned int>(result.get_number(9));
+		policy.sta_traffic_stats = result.get_number(10);
+		policy.sta_link_metric = result.get_number(11);
+		policy.sta_status = result.get_number(12);
+		result.get_string(policy.managed_sta_marker, 13);
+		policy.independent_scan_report = result.get_number(14);
+		policy.profile_1_sta_disallowed = result.get_number(15);
+		policy.profile_2_sta_disallowed = result.get_number(16);
+        policy.def_8021q_settings.primary_vid = static_cast<unsigned short>(result.get_number(17));
+        policy.def_8021q_settings.default_pcp = static_cast<unsigned char>(result.get_number(18));
         
 		update_list(dm_policy_t(&policy), dm_orch_type_db_insert);
     }
